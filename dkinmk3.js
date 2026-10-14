@@ -20,7 +20,13 @@ export const DK_RECIPE = {
       roll:   [0x4B8, 0x4C0, 0x4C8, 0x4D0, 0x4D8, 0x4E0],
       crouch: [0x4EC, 0x5D4],
       attack: [0x614, 0x770, 0x774, 0x778],
-      hurt:   [0x40C, 0x410, 0x414, 0x418],
+      punch:  [0x220, 0x224, 0x234, 0x238],
+      upper:  [0x618, 0x61C, 0x620],
+      slap:   [0x758, 0x75C, 0x760],
+      lunge:  [0x774, 0x778, 0x77C, 0x780],
+      block:  [0x638],
+      win:    [0x61C, 0x620, 0x624, 0x628],
+      hurt:   [0x40C, 0x410, 0x414, 0x418, 0x41C, 0x420],
       down:   [0x38C, 0x390],
     },
   },
@@ -29,8 +35,13 @@ export const DK_RECIPE = {
     tileTable: 0xFFCDA5, tileEntries: 45, aux62: 0xFFF7C0, aux66: 0xFFF7CF,
     frames: 0xFEFC6A, banks: 0xFEFE64, count: 253,
     palette: 0x3FB07F,             // file offset of Sub-Zero's palette (colour 0)
-    ground: 43,                    // feet line in frame coordinates
+    scale: 1.6, ground: 43, feetX: 6,          // feet position in frame coordinates (from the stance)
     maxPieces: 24,                 // 16x16 pieces that fit the fighter's VRAM area
+    // Sub-Zero frame numbers by move, recorded from play (the rest go by outline)
+    moves: [[3, 9, "stand"], [10, 24, "walk"], [25, 25, "stand"], [26, 32, "crouch"], [33, 39, "upper"],
+            [40, 44, "slap"], [45, 63, "punch"], [64, 65, "block"], [66, 76, "lunge"], [77, 83, "lunge"],
+            [84, 84, "roll"], [85, 85, "jump"], [86, 88, "roll"], [89, 95, "roll"], [96, 123, "hurt"],
+            [163, 169, "slap"]],
   },
 };
 
@@ -130,12 +141,11 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
 
   // DK poses at one scale that fits every pose in the VRAM budget
   const base = {}; for (const [cat, ids] of Object.entries(D.poses)) base[cat] = ids.map(id => dkPose(dkcRom, D.frameTable, id));
-  let scale = 2.2, poses;
-  for (; scale > 1; scale -= 0.05) {
-    poses = {}; let worst = 0;
-    for (const [cat, list] of Object.entries(base)) poses[cat] = list.map(p => { const c = cells(scaled(p, scale)); worst = Math.max(worst, c.length); return c; });
-    if (worst <= M.maxPieces) break;
-  }
+  // every pose at DK's size (M.scale), shrunk only if that one pose would not fit the VRAM budget
+  const scale = M.scale, poses = {};
+  for (const [cat, list] of Object.entries(base)) poses[cat] = list.map(p => {
+    for (let s = scale; ; s -= 0.05) { const c = cells(scaled(p, s)); if (c.length <= M.maxPieces || s < 1) return c; }
+  });
 
   // tiles: deduplicated, 256 per table entry, entries after Sub-Zero's own
   const tiles = [], tileIndex = new Map();
@@ -170,12 +180,15 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
       let bytes;
       let b = null;
       try { const f = buildFrame(mk3Rom, M, orig), c = compose(f); b = { ...c, tiles: f.n16 * 4 + f.n8 }; } catch { b = null; }
-      const cat = b && category(b, M.ground);
+      let cat = b && category(b, M.ground);
+      const mv = cat && M.moves.find(([lo, hi]) => i + 1 >= lo && i + 1 <= hi);
+      if (mv) cat = mv[2] === "hurt" && cat === "down" ? "down" : mv[2];
       if (!cat) {
         const o = off(orig); bytes = mk3Rom.subarray(o, o + streamLength(mk3Rom, orig)); kept++;
       } else {
         const list = poseWords[cat], n = counters[cat] = (counters[cat] || 0) + 1, pose = list[n % list.length];
-        const feetX = Math.round(b.ox + b.w / 2), feetY = cat === "jump" || cat === "roll" ? b.oy + b.h : M.ground;
+        const grounded = !["jump", "roll", "hurt", "down"].includes(cat) && b.oy + b.h >= M.ground - 6;
+        const feetX = grounded ? M.feetX : Math.round(b.ox + b.w / 2), feetY = Math.min(M.ground, b.oy + b.h);
         const s = [pose.length, pose.length];
         for (const c of pose) { s.push(0, (feetX + c.x) & 0xFF, (feetY + c.y) & 0xFF); for (const w of c.w) s.push(w & 0xFF, w >> 8); }
         bytes = Uint8Array.from(s); replaced++;

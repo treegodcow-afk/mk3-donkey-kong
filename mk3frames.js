@@ -4,9 +4,10 @@
 //   { tileTable, aux62, aux66, frames: { name: [frameAddr24, ...] }, palette: paletteAddr24 }
 import { CPU65816 } from "./cpu65816.js";
 
+let exhi = false;   // 8 MB ExHiROM build: banks $40-$7D map to the second 4 MB
 const romOffset = a => { const b = a >> 16, o = a & 0xFFFF;
   if (b >= 0xC0) return (b - 0xC0) * 0x10000 + o;
-  if (b >= 0x40 && b < 0x7E) return (b - 0x40) * 0x10000 + o;
+  if (b >= 0x40 && b < 0x7E) return (exhi ? 0x400000 : 0) + (b - 0x40) * 0x10000 + o;
   if ((b & 0x7F) < 0x40 && o >= 0x8000) return (b & 0x3F) * 0x10000 + o;
   return -1; };
 
@@ -49,6 +50,7 @@ const put24 = (ram, a, v) => { put16(ram, a, v & 0xFFFF); ram[a + 2] = (v >> 16)
 
 // Returns { pieces:[{x,y,big,hflip,vflip,pixels:Uint8Array(size*size) of colour indices}], bounds }
 export function buildFrame(rom, recipe, frameAddr) {
+  exhi = rom.length > 0x400000;
   const ram = new Uint8Array(0x20000);
   const D = 0x1800, obj = 0;
   put16(ram, D + 0x94, obj);
