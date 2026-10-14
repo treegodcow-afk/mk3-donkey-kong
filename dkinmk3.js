@@ -43,6 +43,7 @@ export const DK_RECIPE = {
             [40, 44, "slap"], [45, 63, "punch"], [64, 65, "block"], [66, 76, "lunge"], [77, 83, "lunge"],
             [84, 84, "roll"], [85, 85, "jump"], [86, 88, "roll"], [89, 95, "roll"], [96, 123, "hurt"],
             [163, 169, "slap"], [156, 156, "rolling"]],
+    effectsFrom: 186,              // frames 186+ are ice, sparks, body parts: drawn by MK3 as before
     slide: 156,                    // Sub-Zero's slide: shown as DK's animated roll (see the hook below)
     counter: 0x7E1A0A,             // counts up once per frame
     callSites: [0x06EB05, 0x06EB53],   // file offsets of the two "jsl/jml sub_C28000" after a frame pick
@@ -184,7 +185,7 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
       let bytes;
       let b = null;
       try { const f = buildFrame(mk3Rom, M, orig), c = compose(f); b = { ...c, tiles: f.n16 * 4 + f.n8 }; } catch { b = null; }
-      let cat = b && category(b, M.ground);
+      let cat = b && i + 1 < M.effectsFrom && category(b, M.ground);
       const mv = cat && M.moves.find(([lo, hi]) => i + 1 >= lo && i + 1 <= hi);
       if (mv) cat = mv[2] === "hurt" && cat === "down" ? "down" : mv[2];
       if (!cat) {
