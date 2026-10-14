@@ -192,7 +192,7 @@ async function start() {
   let rom = mk3Rom;
   if (dkcRom && document.getElementById("useDk").checked) {
     say("Drawing Donkey Kong from your DKC ROM\u2026", "ok");
-    const { buildDkMk3 } = await import("./dkinmk3.js");
+    const { buildDkMk3 } = await import("./dkinmk3.js?v=" + Date.now());
     rom = buildDkMk3(mk3Rom, dkcRom).rom;
   }
   document.querySelector(".drops").style.display = "none";
