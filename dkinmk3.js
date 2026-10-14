@@ -31,6 +31,7 @@ export const DK_RECIPE = {
       block:  [0x638],
       win:    [0x61C, 0x620, 0x624, 0x628],
       throw:  [0x224, 0x234],
+      slam:   [0x25C, 0x260, 0x264, 0x270, 0x274, 0x278, 0x27C],   // arms up, then both fists into the ground
       banana: [0x1928, 0x192C, 0x1930, 0x1934, 0x1938, 0x193C, 0x1940, 0x1944],   // a spinning banana
       hurt:   [0x40C, 0x410, 0x414, 0x418, 0x41C, 0x420],
       down:   [0x38C, 0x390],
@@ -72,6 +73,10 @@ export const DK_RECIPE = {
     // copied along)
     banner: { setId: 38, frame: 16 },
     effectsFrom: 186,              // frames 186+ are ice, sparks, body parts: drawn by MK3 as before
+    // Ground slam: down, down + high punch. It runs the uppercut (which launches the opponent) with
+    // DK's slam frames in place of frames 33-39, decided when the uppercut animation (id $0B) starts.
+    slam: { padCall: 0x00888E, pads: 0x878000, newPress: 0x7E35D4, animStart: 0x06BCF7, animInit: 0x86DC30,
+            uppercutAnim: 0x0B, frames: [33, 39], window: 30, ram: 0x7EFFC0 },
     slide: 156,                    // Sub-Zero's slide: shown as DK's animated roll (see the hook below)
     counter: 0x7E1A0A,             // counts up once per frame
     callSites: [0x06EB05, 0x06EB53],   // file offsets of the two "jsl/jml sub_C28000" after a frame pick
@@ -426,6 +431,22 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
   const descAt = put(desc);
   const lo = v => v & 0xFF, hi = v => (v >> 8) & 0xFF, cnt = M.counter;
   const hook = [];
+  // slam: while an object's slam flag is set, frames 33-39 draw DK's slam frames instead
+  const SL = M.slam, LAST = SL.ram, DD = SL.ram + 4, FLAG = SL.ram + 8;   // per player / per object words
+  const slamStreams = poseWords.slam.map(pose => { const st = stream(pose, M.feetX, M.ground), at = ap; rom.set(st, exOff(animBank, ap)); ap += st.length; return at; });
+  const slamTable = put(new Uint8Array(Uint16Array.from(slamStreams).buffer));
+  const L = (v, n = 3) => [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF].slice(0, n);
+  hook.push(
+    0xBF, ...L(FLAG), 0xF0, 0x2E,                         // lda f:FLAG,x / beq skip
+    0xBF, 0x06, 0x52, 0x7E, 0x29, 0xFF, 0x01,             // lda f:$7E5206,x / and #$01FF
+    0x38, 0xE9, SL.frames[0], 0x00,                       // sec / sbc #first
+    0xC9, SL.frames[1] - SL.frames[0] + 1, 0x00,          // cmp #count
+    0xB0, 0x17,                                           // bcs clear
+    0x0A, 0xDA, 0xAA, 0xBF, ...L(slamTable & 0xFFFF, 2), T, 0xFA,   // asl / phx / tax / lda f:table,x / plx
+    0x9F, 0x8A, 0x24, 0x7E, 0xA9, animBank, 0x00, 0x9F, 0xA2, 0x24, 0x7E,
+    0x5C, 0x00, 0x80, 0x82,                               // jml sub_C28000
+    0xA9, 0x00, 0x00, 0x9F, ...L(FLAG));                  // clear: lda #0 / sta f:FLAG,x
+                                                          // skip:
   for (const a of anims) {
     const tableAt = put(new Uint8Array(Uint16Array.from(a.streams).buffer));
     hook.push(
@@ -451,6 +472,30 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
   }                                               // next:
   hook.push(0x5C, 0x00, 0x80, 0x82);              // jml sub_C28000
   const hookAt = put(Uint8Array.from(hook));
+
+  // per frame, after the game reads the pads: remember a second Down press within the window
+  const pad = [0x22, ...L(SL.pads), 0x08, 0xC2, 0x30, 0x48, 0xDA, 0xA2, 0x00, 0x00,       // jsl pads / php / rep / pha / phx / ldx #0
+    0xBF, ...L(SL.newPress), 0x29, 0x00, 0x04, 0xF0, 0x1E,                                  // loop: new Down? else next
+    0xAF, ...L(M.counter), 0x38, 0xFF, ...L(LAST), 0xC9, SL.window, 0x00, 0xB0, 0x08,      // counter - last < window?
+    0xAF, ...L(M.counter), 0x9F, ...L(DD),                                                  //   dd = counter
+    0xAF, ...L(M.counter), 0x9F, ...L(LAST),                                                // last = counter
+    0xE8, 0xE8, 0xE0, 0x04, 0x00, 0xD0, 0xD2,                                               // next: inx / inx / cpx #4 / bne loop
+    0xFA, 0x68, 0x28, 0x6B];                                                               // plx / pla / plp / rtl
+  const padAt = put(Uint8Array.from(pad));
+  // when an animation starts: the uppercut (id $0B) of the DK object becomes a slam if Down was
+  // tapped twice just before
+  const anim = [0x08, 0xC2, 0x30, 0x48, 0xDA,                                              // php / rep / pha / phx
+    0xC9, SL.uppercutAnim, 0x00, 0xD0, 0x2C,                                                 // cmp #uppercut / bne done
+    0xA5, 0x2A, 0xC9, 0x04, 0x00, 0xB0, 0x25, 0xAA,                                         // lda $2A / cmp #4 / bcs done / tax
+    0xBF, 0x06, 0x52, 0x7E, 0x29, 0x00, 0xFE, 0xC9, 0x00, 0x08, 0xD0, 0x18,               // set == 8 ?
+    0xAF, ...L(M.counter), 0x38, 0xFF, ...L(DD), 0xC9, SL.window, 0x00,                    // counter - dd < window ?
+    0xA9, 0x00, 0x00, 0xB0, 0x03, 0xA9, 0x01, 0x00, 0x9F, ...L(FLAG),                       // flag = yes/no
+    0xFA, 0x68, 0x28, 0x22, ...L(SL.animInit), 0x6B];                                       // done: plx / pla / plp / jsl init / rtl
+  const animAt = put(Uint8Array.from(anim));
+  for (const [site, target, at] of [[SL.padCall, SL.pads, padAt], [SL.animStart, SL.animInit, animAt]].filter(([s]) => !(SL.skip || []).includes(s))) {
+    if (mk3Rom[site] !== 0x22 || (mk3Rom[site + 1] | (mk3Rom[site + 2] << 8) | (mk3Rom[site + 3] << 16)) !== target) throw new Error("unexpected code at " + site.toString(16));
+    rom[site + 1] = lo(at); rom[site + 2] = hi(at); rom[site + 3] = T; [1, 2, 3].forEach(k => mirror(site + k));
+  }
   for (const site of M.callSites) { if (mk3Rom[site + 1] !== 0x00 || mk3Rom[site + 2] !== 0x80 || mk3Rom[site + 3] !== 0x82) throw new Error("unexpected code at " + site.toString(16)); rom[site + 1] = lo(hookAt); rom[site + 2] = hi(hookAt); rom[site + 3] = T; [1, 2, 3].forEach(k => mirror(site + k)); }
   const ba = off(M.descBanks + M.setId), aa = off(M.descAddrs + M.setId);
   rom[ba] = T; rom[ba + 1] = 0; rom[aa] = descAt & 0xFF; rom[aa + 1] = descAt >> 8;
