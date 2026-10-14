@@ -33,6 +33,9 @@ export const KONGS = {
     voice: 0x1073B9, yell: { offset: 0x07B003, rate: 10680 },   // announcer clip / DK's yell
     bannerFrame: 16,                               // "SUBZERO WINS" in set 38
     scale: 1.6, ground: 43, feetX: 6,
+    // DKC (measured): walk 2 px/frame, run 3, speed eases 1/8 of the way each frame, jump 7 px/frame up,
+    // gravity 0.28 while the button is held and 0.44 after, steerable in the air
+    physics: { walk: 512, run: 768, ease: 3, vy0: 1792, gHold: 72, gRelease: 112, airControl: true },
     effectsFrom: 186,                              // ice, sparks, body parts: kept
     // Sub-Zero's frame numbers by move (recorded from play, then checked side by side)
     moves: [[3, 9, "stand"], [10, 24, "walk"], [25, 25, "stand"], [26, 32, "crouch"], [33, 34, "crouchAtk"],
@@ -79,6 +82,7 @@ export const KONGS = {
     voice: 0x0FE7D3, yell: { offset: 0x07A7F5, rate: 11984 },   // Diddy's cry when he gets hit
     bannerFrame: 21,                               // "KUNG LAO WINS"
     scale: 2.0, ground: 46, feetX: 6,
+    physics: { walk: 512, run: 768, ease: 3, vy0: 1792, gHold: 72, gRelease: 112, airControl: true },   // DKC, as DK
     effectsFrom: 223,                              // slashes, animality: kept (the hat in flight is below)
     // Kung Lao's frame numbers by move (recorded from play, then checked side by side)
     moves: [[3, 9, "stand"], [10, 17, "walk"], [18, 25, "crouch"], [26, 31, "crouchAtk"], [32, 36, "upper"],
@@ -130,6 +134,9 @@ export const KONGS = {
     voice: 0x1011D6, yell: { offset: 0x0357AD, rate: 40250, loopTo: 0, seconds: 0.6 },   // the armour-break crash
     bannerFrame: 15,                                // "NIGHTWOLF WINS"
     scale: 2.8, ground: 46, feetX: 6,
+    // Super Ghouls 'N Ghosts (measured): walk 1 px/frame both ways (no running), jump 2.95 px/frame up with
+    // gravity 0.125, 1.12 px/frame sideways and no steering once in the air, one double jump of 3.54 up
+    physics: { walk: 256, run: 256, ease: 0, vy0: 755, gHold: 32, gRelease: 32, jumpVx: 286, doubleJump: 906, airControl: false },
     effectsFrom: 193,
     moves: [[3, 9, "stand"], [10, 17, "walk"], [18, 18, "stand"], [19, 25, "walk"], [26, 32, "crouch"],
             [33, 37, "crouchAtk"], [38, 42, "upper"], [43, 45, "crouchAtk"], [46, 66, "punch"], [67, 81, "kick"],
@@ -197,6 +204,12 @@ export const MK3 = {
   // mirror of bank $3D) and the one routine that sets the bank ($83:D221) points there, so the Kongs'
   // records can be rewritten without touching anyone else's.
   attackData: { bankByte: 0x03D222, copyFrom: 0x03C000, length: 0x4000, newBank: 0x7D, unit: 25 / 16, yBase: 60 },
+  // Movement: each frame $83:FC73 adds an object's velocity (x $3B46, y $3BFE; 1/256 px per frame, y down)
+  // to its position (x $3CB6.$3D6E, y $3E26.$3EDE), objects indexed by Y (P1 0, P2 2). Walking sets
+  // x velocity to +-832 forward / +-576 back, running +-2048; a jump starts with y velocity -2560 and
+  // gravity adds 128 per frame. The hook at $83:FC78 (two STZs) rewrites a guest's velocities there.
+  physics: { site: 0x03FC78, vx: 0x3B46, vy: 0x3BFE, y: 0x3E26, ceiling: 20, set: 0x5206, held: 0x35D0, press: 0x35D4, ram: 0xFFA0,
+             jumpVy: -2560 + 128, gravity: 128, walk: [832, 576], run: 2048, peak: 96 },   // (gravity, $3F96, is added before the hook)
   // "Battle" screen pictures: per fighter (names entry) a bank ($80:F414), packed 6bpp tiles ($80:F432), packed
   // 32x32 tile map ($80:F450), raw 64-colour palette ($80:F46E) and tile count ($80:F3F6). Each is unpacked by
   // $86:E41A from three call sites; those go through a wrapper that copies data stored unpacked (in banks below
@@ -816,6 +829,86 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
       put16(0, nx); put16(1, ny); put16(2, Math.max(wd, wd + nx - x)); put16(3, nh);
       (stats.attacks = stats.attacks || []).push(`${K.name.split(" ")[0]} ${rec.toString(16)}@${frame}: reach ${x}->${nx} top ${y}->${ny} h ${ht}->${nh}`);
     }
+  }
+
+  // ---- movement from each guest's own game ----
+  {
+    const PH = MK3.physics, R = a => [lo(a), hi(a)];
+    const AIR = PH.ram, DJ = PH.ram + 4, VXM = PH.ram + 8, VYM = PH.ram + 12, LVX = PH.ram + 16, LVY = PH.ram + 20;
+    const c = [], lb = {}, fx = [];
+    const L2 = name => { lb[name] = c.length; };
+    const br = (op, l) => { c.push(op ^ 0x20, 3, 0x82, 0, 0); fx.push([c.length - 2, l]); };   // long conditional
+    const bra = l => { c.push(0x82, 0, 0); fx.push([c.length - 2, l]); };
+    const ldaY = a => c.push(0xB9, ...R(a)), staY = a => c.push(0x99, ...R(a)), ldaI = v => c.push(0xA9, ...R(v & 0xFFFF));
+    const cmpI = v => c.push(0xC9, ...R(v & 0xFFFF)), andI = v => c.push(0x29, ...R(v & 0xFFFF));
+    const neg = () => c.push(0x49, 0xFF, 0xFF, 0x1A), asr = n => { for (let i = 0; i < n; i++) c.push(0xC9, 0x00, 0x80, 0x6A); };
+    // ease vxm toward the target in A by 1/2^ease (or set it outright), then write it as the velocity
+    const easeTo = (P, tag) => {
+      if (P.ease) { c.push(0x38, 0xF9, ...R(VXM)); asr(P.ease); c.push(0x18, 0x79, ...R(VXM)); }
+      staY(VXM); staY(PH.vx); staY(LVX);
+    };
+    // direction target from the held pad (left $0200 / right $0100) times speed
+    const padTarget = (speed, tag) => {
+      ldaY(PH.held); andI(0x0100); br(0xF0, tag + "nr"); ldaI(speed); bra(tag + "td");
+      L2(tag + "nr"); ldaY(PH.held); andI(0x0200); br(0xF0, tag + "nl"); ldaI(-speed); bra(tag + "td");
+      L2(tag + "nl"); ldaI(0); L2(tag + "td");
+    };
+    c.push(0x08, 0xC2, 0x30, 0xC0, 0x04, 0x00); br(0xB0, "done");             // php / rep #$30 / cpy #4 / bcs done
+    ldaY(PH.set); c.push(0xEB); andI(0xFE);
+    const guests = which.map(k => kongs[k]).filter(K => K.physics);
+    guests.forEach((K, gi) => { cmpI(K.setId); br(0xF0, "g" + gi); });
+    bra("done");
+    guests.forEach((K, gi) => {
+      const P = K.physics, t = "g" + gi + "_", hs = K.scale;
+      const peak = P.vy0 * P.vy0 / (2 * P.gHold) / 256, vs = Math.min(hs, PH.peak / peak);
+      const W = Math.round(P.walk * hs), RUN = Math.round(P.run * hs), VY0 = Math.round(P.vy0 * vs);
+      const GH = Math.round(P.gHold * vs), GR = Math.round(P.gRelease * vs), JX = Math.round((P.jumpVx || 0) * hs), DJV = Math.round((P.doubleJump || 0) * vs);
+      L2("g" + gi);
+      // in the air under our control? MK3 must have changed nothing but its own gravity since last frame
+      // (its forward jump re-sets the sideways speed every frame, so only the vertical speed is checked)
+      ldaY(AIR); br(0xF0, t + "ground");
+      ldaY(PH.vy); c.push(0xD9, ...R(LVY)); br(0xD0, t + "abort");
+      if (P.doubleJump) {   // a fresh Up press in the air, once
+        ldaY(PH.press); andI(0x0800); br(0xF0, t + "nodj"); ldaY(DJ); br(0xD0, t + "nodj");
+        ldaI(1); staY(DJ); ldaI(-DJV); staY(VYM); bra(t + "wvy"); L2(t + "nodj");
+      }
+      // gravity: lighter while Up is held (DKC's higher jump when the button is kept down)
+      ldaY(PH.held); andI(0x0800); br(0xF0, t + "rel"); ldaI(GH); bra(t + "gadd"); L2(t + "rel"); ldaI(GR);
+      L2(t + "gadd"); c.push(0x18, 0x79, ...R(VYM)); staY(VYM);
+      // ceiling: still rising with the feet near the top of the screen -> stop rising
+      ldaY(PH.y); c.push(0x38, 0xE9, ...R(PH.ceiling)); br(0x10, t + "noceil"); ldaY(VYM); br(0x10, t + "noceil"); ldaI(0); staY(VYM); L2(t + "noceil");
+      L2(t + "wvy"); ldaY(VYM); staY(PH.vy); c.push(0x18); c.push(0x69, ...R(PH.gravity)); staY(LVY);
+      if (P.airControl) { padTarget(W, t + "a"); easeTo(P); } else { ldaY(VXM); staY(PH.vx); staY(LVX); }
+      bra("done");
+      L2(t + "abort"); ldaI(0); staY(AIR);
+      L2(t + "ground");
+      ldaY(PH.vy); cmpI(PH.jumpVy); br(0xD0, t + "walk");
+      // jump start
+      ldaI(1); staY(AIR); ldaI(0); staY(DJ); ldaI(-VY0); staY(VYM);
+      if (P.jumpVx) {   // fixed sideways speed in the direction MK3 jumped
+        ldaY(PH.vx); br(0xF0, t + "j0"); br(0x30, t + "jn"); ldaI(JX); bra(t + "js"); L2(t + "jn"); ldaI(-JX); bra(t + "js"); L2(t + "j0"); ldaI(0); L2(t + "js"); staY(VXM);
+      } else {          // keep the running speed (momentum); a jump from standing in a direction gets walking speed
+        ldaY(VXM); br(0xD0, t + "jk"); ldaY(PH.vx); br(0xF0, t + "jk"); br(0x30, t + "jn"); ldaI(W); bra(t + "js"); L2(t + "jn"); ldaI(-W); L2(t + "js"); staY(VXM); L2(t + "jk");
+      }
+      bra(t + "wvy2");
+      L2(t + "wvy2"); ldaY(VYM); staY(PH.vy); c.push(0x18, 0x69, ...R(PH.gravity)); staY(LVY); ldaY(VXM); staY(PH.vx); staY(LVX); bra("done");
+      // walking / running: MK3's speed picks the direction, the guest's game picks the speed
+      L2(t + "walk"); ldaY(PH.vx); br(0xF0, t + "stop");
+      for (const [mk, sp, tag] of [[PH.walk[0], W, "w0"], [PH.walk[1], W, "w1"], [PH.run, RUN, "r"]]) {
+        cmpI(mk); br(0xD0, t + tag + "a"); ldaI(sp); easeTo(P); bra("done");
+        L2(t + tag + "a"); cmpI(-mk); br(0xD0, t + tag + "b"); ldaI(-sp); easeTo(P); bra("done"); L2(t + tag + "b");
+      }
+      // any other speed is MK3's own (knockback, lunges, pushing): leave it, and carry it as momentum
+      ldaY(PH.vx); staY(VXM); bra("done");
+      // MK3 stopped the fighter: DKC's Kongs slide to a halt (same easing), Arthur stops dead
+      L2(t + "stop"); if (P.ease) { ldaI(0); easeTo(P); } else { ldaI(0); staY(VXM); } bra("done");
+    });
+    L2("done"); c.push(0x28, 0x64, 0x0A, 0x64, 0x0C, 0x6B);                   // plp / stz $0A / stz $0C / rtl
+    for (const [at, l] of fx) { const d = lb[l] - (at + 2); c[at] = d & 0xFF; c[at + 1] = (d >> 8) & 0xFF; }
+    const at = put(Uint8Array.from(c));
+    if ([0x64, 0x0A, 0x64, 0x0C].some((b, i) => mk3Rom[PH.site + i] !== b)) throw new Error("unexpected code at the movement hook");
+    rom[PH.site] = 0x22; rom[PH.site + 1] = lo(at); rom[PH.site + 2] = hi(at); rom[PH.site + 3] = T; [0, 1, 2, 3].forEach(i => mirror(PH.site + i));
+    stats.physicsBytes = c.length;
   }
 
   // ---- "Battle" screen pictures ----
