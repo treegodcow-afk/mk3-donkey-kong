@@ -14,7 +14,8 @@ export const DK_RECIPE = {
     frameTable: 0x3BCC9C,          // file offset; 4 bytes per frame id (addr16, bank, y)
     palette: 0x39B783,             // file offset of DK's sprite palette (colour 0)
     bananaPalette: 0x3C86F0,       // the bananas' sprite palette (colour 0)
-    portraitPose: 0x61C,           // DK facing the camera, for the select-screen portrait
+    portraitPose: 0x61C,
+    yell: { offset: 0x07B003, rate: 10680 },   // DK's yell when he gets hit (BRR sample, file offset)           // DK facing the camera, for the select-screen portrait
     poses: {
       stand:  [0xBC, 0xC0, 0xC4, 0xC8, 0xCC, 0xD0, 0xD4, 0xD8],
       walk:   [0xE0, 0xE8, 0xF0, 0xF8, 0x100, 0x108, 0x110, 0x118, 0x120, 0x128],
@@ -63,6 +64,13 @@ export const DK_RECIPE = {
     // $80:FF0A); a table at $80:FF0F gives each name's (first tile, tiles, padding). Sub-Zero is entry
     // 4. DK's name goes in after the last name (which ends at tile 114) and entry 4 points at it.
     names: { unpackCall: 0x00FF0A, buffer: 0x7F5300, table: 0x00FF0F, entry: 4, freeTile: 120 },
+    // The "Sub-Zero!" announcer clip: streamed to the sound chip from $D0:73B9 (3-byte prefix, then
+    // BRR blocks played at about 6 kHz; the clip ends at block 340)
+    voice: { offset: 0x1073B9 + 3, blocks: 341, rate: 6000 },
+    // "<NAME> WINS" banner: frame 16 of graphics set 38 is "SUBZERO"; the set's descriptor is copied
+    // so frame 16 can point at a DONKEY KONG frame (frames 1-64 share one bank, so their streams are
+    // copied along)
+    banner: { setId: 38, frame: 16 },
     effectsFrom: 186,              // frames 186+ are ice, sparks, body parts: drawn by MK3 as before
     slide: 156,                    // Sub-Zero's slide: shown as DK's animated roll (see the hook below)
     counter: 0x7E1A0A,             // counts up once per frame
@@ -181,7 +189,27 @@ const GLYPHS = {
   E: ["#####", "#....", "#....", "####.", "#....", "#....", "#####"],
   Y: ["#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."],
   G: [".###.", "#...#", "#....", "#.###", "#...#", "#...#", ".####"],
+  W: ["#...#", "#...#", "#...#", "#.#.#", "#.#.#", "##.##", "#...#"],
+  I: [".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."],
+  S: [".####", "#....", "#....", ".###.", "....#", "....#", "####."],
 };
+// The big "<NAME> WINS" banner text: same letters, 9 rows tall and doubled in width, colour 1
+// fill and colour 2 shadow like the game's banner frames.
+export function bannerText(text = "DONKEY KONG") {
+  const rows = [0, 1, 1, 2, 3, 4, 5, 5, 6], slant = [2, 2, 2, 1, 1, 1, 0, 0, 0];
+  const w = text.replace(/ /g, "").length * 7 + (text.split(" ").length - 1) * 5 + 4, h = 11, data = new Uint8Array(w * h);
+  let x = 0;
+  for (const ch of text) {
+    if (ch === " ") { x += 5; continue; }
+    const g = GLYPHS[ch];
+    for (let r = 0; r < 9; r++) for (let c = 0; c < 5; c++) if (g[rows[r]][c] === "#")
+      for (const dx of [0, 1]) data[r * w + x + c + dx + slant[r]] = 1;
+    x += 7;
+  }
+  for (let y = h - 2; y >= 0; y--) for (let X = w - 2; X >= 0; X--) if (data[y * w + X] === 1 && !data[(y + 1) * w + X + 1]) data[(y + 1) * w + X + 1] = 2;
+  return { w, h, data, fx: Math.round(w / 2), fy: h };
+}
+
 export function nameStrip(text = "DONKEY KONG") {
   const W = 80, px = new Uint8Array(W * 8), slant = [2, 2, 1, 1, 1, 0, 0];
   let x = 1;
@@ -204,6 +232,57 @@ export function nameStrip(text = "DONKEY KONG") {
   for (let y = 0; y < 8; y++) for (let X = 0; X < W; X++) { const c = px[y * W + X], t = X >> 3, m = 1 << (7 - (X & 7));
     if (c & 1) out[t * 16 + y * 2] |= m; if (c & 2) out[t * 16 + y * 2 + 1] |= m; }
   return out;
+}
+
+// SNES BRR sound: decode a sample, and encode 16-bit PCM (each 16-sample block tries every filter
+// and shift and keeps the closest).
+function brrDecode(buf, off) {
+  const out = []; let p1 = 0, p2 = 0;
+  for (let o = off; ; o += 9) {
+    const hdr = buf[o], range = hdr >> 4, filter = (hdr >> 2) & 3;
+    for (let i = 0; i < 16; i++) {
+      let n = buf[o + 1 + (i >> 1)]; n = i & 1 ? n & 15 : n >> 4; if (n >= 8) n -= 16;
+      const s = clampDecode((range <= 12 ? (n << range) >> 1 : (n < 0 ? -2048 : 0)) + predict(filter, p1, p2));
+      p2 = p1; p1 = s; out.push(s);
+    }
+    if (hdr & 1) break;
+  }
+  return out;
+}
+const predict = (f, p1, p2) => f === 0 ? 0 : f === 1 ? p1 + ((-p1) >> 4) : f === 2 ? 2 * p1 + ((-3 * p1) >> 5) - p2 + (p2 >> 4) : 2 * p1 + ((-13 * p1) >> 6) - p2 + ((3 * p2) >> 4);
+const clampDecode = s => { s = Math.max(-32768, Math.min(32767, s)); return ((s << 17) >> 16) >> 1; };
+function brrEncode(pcm) {
+  const out = []; let p1 = 0, p2 = 0;
+  for (let b = 0; b * 16 < pcm.length; b++) {
+    let best = null;
+    for (let filter = b === 0 ? 0 : 0; filter < (b === 0 ? 1 : 4); filter++) for (let range = 0; range <= 12; range++) {
+      let q1 = p1, q2 = p2, err = 0; const nib = [];
+      for (let i = 0; i < 16; i++) {
+        const target = (pcm[b * 16 + i] || 0) >> 1, pred = predict(filter, q1, q2);
+        let n = Math.round((target - pred) * 2 / (1 << range)); n = Math.max(-8, Math.min(7, n));
+        const s = clampDecode(((n << range) >> 1) + pred); err += (s - target) ** 2; nib.push(n & 15); q2 = q1; q1 = s;
+      }
+      if (!best || err < best.err) best = { err, filter, range, nib, q1, q2 };
+    }
+    const blk = [(best.range << 4) | (best.filter << 2)]; for (let i = 0; i < 16; i += 2) blk.push((best.nib[i] << 4) | best.nib[i + 1]);
+    out.push(...blk); p1 = best.q1; p2 = best.q2;
+  }
+  out[out.length - 9] |= 1;   // end
+  return Uint8Array.from(out);
+}
+
+// DK's yell, resampled to the announcer's rate, as BRR blocks for the "Sub-Zero!" slot.
+export function dkVoice(mk3, dkc, D, V) {
+  const src = brrDecode(dkc, D.yell.offset).map(x => x * 2);   // decoder output is 15-bit
+  const ref = brrDecode(mk3, V.offset).map(x => x * 2);
+  const peak = a => a.reduce((m, x) => Math.max(m, Math.abs(x)), 1);
+  const gain = Math.min(4, peak(ref) / peak(src));
+  const n = Math.floor(src.length * V.rate / D.yell.rate), pcm = [];
+  for (let i = 0; i < n; i++) { const t = i * D.yell.rate / V.rate, k = Math.floor(t), f = t - k;   // linear interpolation
+    pcm.push(Math.round(((src[k] || 0) * (1 - f) + (src[k + 1] || 0) * f) * gain)); }
+  for (let i = 0; i < 32; i++) pcm.push(0);   // a short tail of silence
+  const brr = brrEncode(pcm.slice(0, V.blocks * 16));
+  return brr;
 }
 
 // Which DK pose a Sub-Zero frame becomes, from its outline.
@@ -436,6 +515,59 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
     if (mk3Rom[c] !== 0x22 || mk3Rom[c + 1] !== lo(S.unpacker)) throw new Error("unexpected code at name unpack");
     rom[c + 1] = lo(nwAt); rom[c + 2] = hi(nwAt); rom[c + 3] = T; [1, 2, 3].forEach(k => mirror(c + k));
     const e = N.table + N.entry * 3; rom[e] = N.freeTile; rom[e + 1] = 10; rom[e + 2] = 0; [0, 1, 2].forEach(k => mirror(e + k)); }
+
+  // the announcer says DK's yell instead of "Sub-Zero!" (the clip keeps its length; anything after
+  // the new end flag is never played)
+  { const v = dkVoice(mk3Rom, dkcRom, D, M.voice); rom.set(v, M.voice.offset); }
+
+  // "DONKEY KONG WINS"
+  {
+    const B = M.banner, dOff2 = off((mk3Rom[off(M.descBanks + B.setId)] << 16) | mk3Rom[off(M.descAddrs + B.setId)] | (mk3Rom[off(M.descAddrs + B.setId) + 1] << 8));
+    const r16 = o => mk3Rom[o] | (mk3Rom[o + 1] << 8);
+    const tt = (mk3Rom[dOff2 + 4] << 16) | r16(dOff2 + 2), ftb = mk3Rom[dOff2 + 7];
+    const ft = (ftb << 16) | r16(dOff2 + 5), bt = (ftb << 16) | r16(dOff2);
+    const count = (bt - ft) >> 1, frameAddr = i => (mk3Rom[off(bt) + (i >> 6)] << 16) | r16(off(ft) + i * 2);
+    // tile table entries in use, so DK's letters get a free one
+    let maxEntry = 0;
+    for (let i = 0; i < count; i++) { const a = frameAddr(i), p0 = off(a); let p = p0 + 2; const total = mk3Rom[p0], n16 = mk3Rom[p0 + 1];
+      for (let k = 0; k < total; k++) { const c = mk3Rom[p++]; if (!(c & 0xF0)) p++; if (!(c & 0x0F)) p++; const nw = k < n16 ? 4 : 1;
+        for (let j = 0; j < nw; j++) maxEntry = Math.max(maxEntry, (mk3Rom[p + j * 2] & 0xFC) >> 2); p += nw * 2; } }
+    const entry = maxEntry + 1; if (entry > 63) throw new Error("banner set has no free tile entry");
+    // Keep the original frame's pieces (positions, sizes, order) and give them new tiles painted with
+    // DONKEY KONG, squeezed to the original text's width.
+    const aux = (mk3Rom[dOff2 + 11] << 16) | r16(dOff2 + 12);   // this set's position tables
+    const origAddr = frameAddr(B.frame - 1), orig = buildFrame(mk3Rom, { tileTable: tt, aux62: aux + 1, aux66: aux + 16 }, origAddr);
+    const x0 = Math.min(...orig.pieces.map(q => q.x)), x1 = Math.max(...orig.pieces.map(q => q.x + q.size)), y0 = Math.min(...orig.pieces.map(q => q.y));
+    const big = bannerText("DONKEY KONG WINS"), W = x1 - x0, img = { w: W, h: big.h, data: new Uint8Array(W * big.h) };
+    for (let y = 0; y < big.h; y++) for (let x = 0; x < W; x++) img.data[y * W + x] = big.data[y * big.w + Math.floor(x * big.w / W)];
+    const at = (x, y) => (x >= x0 && x < x1 && y >= y0 && y < y0 + img.h) ? img.data[(y - y0) * W + (x - x0)] : 0;
+    const btiles = [], word = t => { btiles.push(t); return (((btiles.length - 1) << 8) | (entry * 4)); };
+    const tileAt = (px, py) => { const px16 = new Uint8Array(256); for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) px16[y * 16 + x] = at(px + x, py + y); return tileBytes(px16, 0, 0); };
+    const words = orig.pieces.flatMap(q => q.size === 16 ? [word(tileAt(q.x, q.y)), word(tileAt(q.x + 8, q.y)), word(tileAt(q.x, q.y + 8)), word(tileAt(q.x + 8, q.y + 8))] : [word(tileAt(q.x, q.y))]);
+    // copy the stream, swapping in the new tile words (flip bits cleared)
+    const src = off(origAddr), len = streamLength(mk3Rom, origAddr), copy = Uint8Array.from(mk3Rom.subarray(src, src + len));
+    { let p = 2, k = 0; const total = copy[0], n16 = copy[1];
+      for (let i = 0; i < total; i++) { const c = copy[p++]; if (!(c & 0xF0)) p++; if (!(c & 0x0F)) p++;
+        for (let j = 0; j < (i < n16 ? 4 : 1); j++, k++) { copy[p] = words[k] & 0xFF; copy[p + 1] = words[k] >> 8; p += 2; } } }
+    const bBank = bank++; let bp = 0;
+    const tilesAt = bp; btiles.forEach(t => { rom.set(t, exOff(bBank, bp)); bp += 32; });
+    const table2 = new Uint8Array(256); table2.set(mk3Rom.subarray(off(tt), off(tt) + entry * 4));
+    table2[entry * 4] = lo(tilesAt); table2[entry * 4 + 1] = hi(tilesAt); table2[entry * 4 + 2] = bBank; table2[entry * 4 + 3] = 0;
+    // frames 1-64 copied into the new bank (frame 16 replaced), the rest keep their bank
+    const addrs2 = new Uint16Array(count), banks2 = [];
+    for (let g = 0; g * 64 < count; g++) banks2.push(g === 0 ? bBank : mk3Rom[off(bt) + g]);
+    for (let i = 0; i < count; i++) {
+      if (i >= 64) { addrs2[i] = r16(off(ft) + i * 2); continue; }
+      const bytes = i + 1 === B.frame && !B.keepOriginal ? copy : mk3Rom.subarray(off(frameAddr(i)), off(frameAddr(i)) + streamLength(mk3Rom, frameAddr(i)));
+      rom.set(bytes, exOff(bBank, bp)); addrs2[i] = bp; bp += bytes.length;
+      if (bp > 0x8000) throw new Error("banner bank full");
+    }
+    const tAt = put(table2), fAt = put(new Uint8Array(addrs2.buffer)), bAt = put(Uint8Array.from([...banks2, 0, 0]));
+    const desc2 = Uint8Array.from(mk3Rom.subarray(dOff2, dOff2 + 16));
+    desc2[0] = lo(bAt); desc2[1] = hi(bAt); desc2[2] = lo(tAt); desc2[3] = hi(tAt); desc2[4] = T; desc2[5] = lo(fAt); desc2[6] = hi(fAt); desc2[7] = T;
+    const d2At = put(desc2), ba2 = off(M.descBanks + B.setId), aa2 = off(M.descAddrs + B.setId);
+    rom[ba2] = T; rom[ba2 + 1] = 0; rom[aa2] = lo(d2At); rom[aa2 + 1] = hi(d2At); [ba2, ba2 + 1, aa2, aa2 + 1].forEach(mirror);
+  }
 
   // banana yellow for the ice ball
   for (let i = 1; i < 16; i++) { rom[M.iceBallPalette + i * 2] = dkcRom[D.bananaPalette + i * 2]; rom[M.iceBallPalette + i * 2 + 1] = dkcRom[D.bananaPalette + i * 2 + 1]; mirror(M.iceBallPalette + i * 2); mirror(M.iceBallPalette + i * 2 + 1); }
