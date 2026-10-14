@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MK3 Donkey Kong</title>
+<style>
+  :root { --bg:#0b0d14; --panel:#171a24; --text:#e8e9ec; --muted:#9aa0ab; --accent:#4fb3ff; --ok:#5fd68a; --bad:#ff6b6b; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg:#f4f4f6; --panel:#fff; --text:#16181d; --muted:#5d636e; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,sans-serif; }
+  main { max-width:860px; margin:0 auto; padding:24px 16px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  p { color:var(--muted); margin:0 0 16px; }
+  #drop { background:var(--panel); border:2px dashed var(--muted); border-radius:12px; padding:28px 16px; text-align:center; cursor:pointer; }
+  #drop.over { border-color:var(--accent); }
+  #status, #netStatus { margin:12px 0; min-height:1.5em; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); }
+  #screen, #remote { display:none; width:100%; max-width:800px; aspect-ratio:4/3; background:#000; border-radius:8px; margin:0 auto; image-rendering:pixelated; }
+  #netplay { display:none; margin:12px 0; gap:8px; flex-wrap:wrap; align-items:center; }
+  #inviteLink { flex:1; min-width:0; font:13px ui-monospace,monospace; padding:6px 8px; background:var(--panel); color:var(--text); border:1px solid var(--muted); border-radius:6px; }
+  button { font:inherit; padding:6px 14px; border-radius:6px; border:1px solid var(--accent); background:var(--accent); color:#111; cursor:pointer; }
+  table { border-collapse:collapse; margin-top:16px; color:var(--muted); font-size:14px; }
+  td { padding:2px 12px 2px 0; } kbd { background:var(--panel); border:1px solid var(--muted); border-radius:4px; padding:0 5px; color:var(--text); }
+  label { color:var(--muted); font-size:14px; }
+  .drops { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+  .drops .drop { background:var(--panel); border:2px dashed var(--muted); border-radius:12px; padding:20px 14px; text-align:center; cursor:pointer; }
+  .drops .drop.over { border-color:var(--accent); } .drops .drop.done { border-style:solid; border-color:var(--ok); }
+  .select { display:none; margin:16px 0; }
+  .select h2 { font-size:16px; margin:12px 0 6px; }
+  .cards { display:flex; gap:8px; flex-wrap:wrap; }
+  .card { background:var(--panel); border:2px solid transparent; border-radius:10px; padding:10px 14px; cursor:pointer; min-width:120px; }
+  .card.sel { border-color:var(--accent); } .card[disabled] { opacity:.4; cursor:not-allowed; }
+  .card small { display:block; color:var(--muted); }
+  #startBtn { margin-top:14px; }
+  .guest-only { display:none; }
+  body.guest .host-only { display:none; } body.guest .guest-only { display:block; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Mortal Kombat 3, with Donkey Kong</h1>
+  <p class="host-only">Load your own dump of <em>Mortal Kombat 3 (USA)</em> and your <em>Donkey Kong Country (USA) (Rev 1)</em> dump. The page draws Donkey Kong from your DKC cartridge into MK3, in Sub-Zero's slot on the select screen (he fights with Sub-Zero's moves). Two players on one keyboard, or invite a friend online. The game files never leave your browser.</p>
+  <p class="guest-only">You're joining a friend's game as player 2. Their game streams to you here and your controls run player 2. Press Start (<kbd>Enter</kbd>) to join in.</p>
+  <div class="drops host-only">
+    <div class="drop" id="dropMk3" tabindex="0"><b>Mortal Kombat 3 (USA)</b><br>drop the .sfc here or click<input type="file" id="fileMk3" accept=".sfc,.smc" hidden></div>
+    <div class="drop" id="dropDkc" tabindex="0"><b>Donkey Kong Country (USA) (Rev 1)</b><br>for Donkey Kong<input type="file" id="fileDkc" accept=".sfc,.smc" hidden></div>
+  </div>
+  <div class="select host-only" id="select">
+    <label><input type="checkbox" id="useDk" checked disabled> Donkey Kong replaces Sub-Zero (needs the DKC file)</label><br>
+    <button id="startBtn">Start the game</button>
+  </div>
+  <div id="status"></div>
+  <div id="netplay">
+    <button id="invite">Invite a friend online</button>
+    <input id="inviteLink" readonly placeholder="Invite link appears here" hidden>
+  </div>
+  <div id="netStatus"></div>
+  <canvas id="screen"></canvas>
+  <video id="remote" autoplay playsinline></video>
+  <table class="host-only">
+    <tr><td></td><td><b>Player 1</b></td><td><b>Player 2 (same keyboard)</b></td></tr>
+    <tr><td>Move</td><td><kbd>Arrows</kbd></td><td><kbd>I</kbd><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd></td></tr>
+    <tr><td>SNES Y / B</td><td><kbd>Z</kbd> / <kbd>X</kbd></td><td><kbd>B</kbd> / <kbd>N</kbd></td></tr>
+    <tr><td>SNES X / A</td><td><kbd>A</kbd> / <kbd>S</kbd></td><td><kbd>G</kbd> / <kbd>H</kbd></td></tr>
+    <tr><td>SNES L / R</td><td><kbd>Q</kbd> / <kbd>W</kbd></td><td><kbd>T</kbd> / <kbd>Y</kbd></td></tr>
+    <tr><td>Start</td><td><kbd>Enter</kbd></td><td><kbd>2</kbd></td></tr>
+  </table>
+  <table class="guest-only">
+    <tr><td>Move</td><td><kbd>Arrows</kbd></td></tr>
+    <tr><td>SNES Y / B</td><td><kbd>Z</kbd> / <kbd>X</kbd></td></tr>
+    <tr><td>SNES X / A</td><td><kbd>A</kbd> / <kbd>S</kbd></td></tr>
+    <tr><td>SNES L / R</td><td><kbd>Q</kbd> / <kbd>W</kbd></td></tr>
+    <tr><td>Start (join)</td><td><kbd>Enter</kbd></td></tr>
+  </table>
+  <p>Gamepads work too: on the host the first one is player 1 and the second is player 2; a joining friend's first gamepad is player 2.</p>
+</main>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script type="module">
+const S9X = "https://unpkg.com/@wasm-gaming/snes9x-wasm@0.1.1/dist/snes9x/snes9x.sdk.js";
+// SHA-1s of the known-good unheadered dumps
+const GOOD_SHA1 = "8ee954e15b7d77a7941b107c8243b27acebdcbc0";
+const MK3_SHA1 = "58e4e1259a86faaadbc982176e569cb2038dbac5";   // Mortal Kombat 3 (USA).sfc
+const params = new URLSearchParams(location.search);
+const JOIN_ID = params.get("join");
+
+const statusEl = document.getElementById("status"), netEl = document.getElementById("netStatus");
+const say = (msg, cls) => { statusEl.textContent = msg; statusEl.className = cls || ""; };
+const net = (msg, cls) => { netEl.textContent = msg; netEl.className = cls || ""; };
+
+// SNES buttons in a fixed order for the network bitmask, and the snes9x-wasm
+// keyboard codes for player 2 that the host replays a guest's buttons as.
+const BTN = ["b", "y", "select", "start", "up", "down", "left", "right", "a", "x", "l", "r"];
+const P2_KEYS = { b: "KeyN", y: "KeyB", select: "Digit1", start: "Digit2", up: "KeyI", down: "KeyK",
+                  left: "KeyJ", right: "KeyL", a: "KeyH", x: "KeyG", l: "KeyT", r: "KeyY" };
+// Guest keyboard (same layout as player 1 on the host) and standard gamepad mapping.
+const GUEST_KEYS = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", KeyX: "b", KeyZ: "y",
+                     KeyS: "a", KeyA: "x", KeyQ: "l", KeyW: "r", Enter: "start", ShiftRight: "select" };
+const PAD = { 0: "b", 1: "a", 2: "y", 3: "x", 4: "l", 5: "r", 8: "select", 9: "start", 12: "up", 13: "down", 14: "left", 15: "right" };
+
+async function sha1Hex(buf) {
+  const h = await crypto.subtle.digest("SHA-1", buf);
+  return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Capture whatever the emulator plays so it can be streamed to an online guest:
+// any node connected to a context's speakers is also connected to a stream output.
+const streamOut = new WeakMap();
+const origConnect = AudioNode.prototype.connect;
+AudioNode.prototype.connect = function (dest, ...rest) {
+  const r = origConnect.call(this, dest, ...rest);
+  if (dest instanceof AudioDestinationNode) {
+    let out = streamOut.get(this.context);
+    if (!out) { out = this.context.createMediaStreamDestination(); streamOut.set(this.context, out); window.__gameAudio = out; }
+    origConnect.call(this, out);
+  }
+  return r;
+};
+
+// ============================ host ============================
+const canvas = document.getElementById("screen");
+let engine = null;
+
+async function run(romBytes) {
+  canvas.style.display = "block";
+  const { load } = await import(S9X);
+  engine = await load({ canvasEl: canvas, assets: { rom: romBytes }, options: { region: "auto", aspect: "4:3" } });
+  engine.start();
+  document.getElementById("netplay").style.display = "flex";
+}
+
+// Replays an online guest's buttons as player-2 key presses.
+let remoteBits = 0;
+function applyRemote(bits) {
+  for (let i = 0; i < BTN.length; i++) {
+    const was = remoteBits & (1 << i), now = bits & (1 << i);
+    if (was !== now) window.dispatchEvent(new KeyboardEvent(now ? "keydown" : "keyup", { code: P2_KEYS[BTN[i]] }));
+  }
+  remoteBits = bits;
+}
+
+let peer = null;
+document.getElementById("invite").onclick = () => {
+  if (peer) return;
+  net("Creating an invite link…");
+  peer = new Peer();
+  peer.on("open", id => {
+    const link = document.getElementById("inviteLink");
+    link.value = location.origin + location.pathname + "?join=" + encodeURIComponent(id);
+    link.hidden = false;
+    link.select();
+    net("Send this link to a friend. They don't need the game file.", "ok");
+  });
+  peer.on("connection", conn => {
+    conn.on("open", () => {
+      const stream = canvas.captureStream(60);
+      if (window.__gameAudio) window.__gameAudio.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+      peer.call(conn.peer, stream);
+      net("Friend connected. They're player 2: they press Start to join in.", "ok");
+    });
+    conn.on("data", d => { if (d && typeof d.b === "number") applyRemote(d.b); });
+    conn.on("close", () => { applyRemote(0); net("Friend disconnected. The invite link still works.", "bad"); });
+  });
+  peer.on("error", err => net("Online play error: " + err.type + ". Try again.", "bad"));
+};
+
+// ---- host setup: ROMs, build ----
+let dkcRom = null, mk3Rom = null;
+async function readRom(file) {
+  let rom = new Uint8Array(await file.arrayBuffer());
+  if (rom.length % 1024 === 512) rom = rom.slice(512);   // drop a copier header
+  return { rom, hash: await sha1Hex(rom) };
+}
+async function setMk3(file) {
+  const { rom, hash } = await readRom(file);
+  if (hash !== MK3_SHA1) { say("That file doesn't match the Mortal Kombat 3 (USA) dump this mod expects (SHA-1 " + hash.slice(0, 12) + "\u2026).", "bad"); return; }
+  mk3Rom = rom;
+  document.getElementById("dropMk3").classList.add("done");
+  document.getElementById("select").style.display = "block";
+  say(dkcRom ? "Both games verified. Start when ready." : "Mortal Kombat 3 verified. Add Donkey Kong Country for DK, or start the plain game.", "ok");
+}
+async function setDkc(file) {
+  const { rom, hash } = await readRom(file);
+  if (hash !== GOOD_SHA1) { say("That file doesn't match the Donkey Kong Country (USA) (Rev 1) dump (SHA-1 " + hash.slice(0, 12) + "\u2026).", "bad"); return; }
+  dkcRom = rom;
+  document.getElementById("dropDkc").classList.add("done");
+  document.getElementById("useDk").disabled = false;
+  say(mk3Rom ? "Both games verified. Start when ready." : "Donkey Kong Country verified. Now add Mortal Kombat 3.", "ok");
+}
+async function start() {
+  if (engine || !mk3Rom) return;
+  let rom = mk3Rom;
+  if (dkcRom && document.getElementById("useDk").checked) {
+    say("Drawing Donkey Kong from your DKC ROM\u2026", "ok");
+    const { buildDkMk3 } = await import("./dkinmk3.js");
+    rom = buildDkMk3(mk3Rom, dkcRom).rom;
+  }
+  document.querySelector(".drops").style.display = "none";
+  document.getElementById("select").style.display = "none";
+  try {
+    await run(rom);
+    say("Running. DK is in Sub-Zero's spot on the select screen. Player 2 presses 2 (or Start on pad 2) to join.", "ok");
+  } catch (err) {
+    say("The emulator failed to start: " + err.message, "bad");
+  }
+}
+
+// ============================ guest ============================
+function startGuest() {
+  document.body.classList.add("guest");
+  const video = document.getElementById("remote");
+  video.style.display = "block";
+  video.muted = true;
+  net("Connecting to your friend's game…");
+  let conn = null, keyBits = 0, padBits = 0, lastSent = -1;
+  const send = () => { const b = keyBits | padBits; if (conn && conn.open && b !== lastSent) { conn.send({ b }); lastSent = b; } };
+  setInterval(() => { lastSent = -1; send(); }, 500);
+  for (const [type, on] of [["keydown", true], ["keyup", false]]) {
+    window.addEventListener(type, e => {
+      const name = GUEST_KEYS[e.code];
+      if (!name) return;
+      const bit = 1 << BTN.indexOf(name);
+      keyBits = on ? keyBits | bit : keyBits & ~bit;
+      send();
+      e.preventDefault();
+      if (video.muted) video.muted = false;
+    });
+  }
+  (function pollPad() {
+    const pad = navigator.getGamepads ? navigator.getGamepads()[0] : null;
+    if (pad) {
+      let b = 0;
+      for (const [i, name] of Object.entries(PAD)) if (pad.buttons[i] && pad.buttons[i].pressed) b |= 1 << BTN.indexOf(name);
+      if (pad.axes[0] < -0.4) b |= 1 << BTN.indexOf("left");
+      if (pad.axes[0] > 0.4) b |= 1 << BTN.indexOf("right");
+      if (pad.axes[1] < -0.4) b |= 1 << BTN.indexOf("up");
+      if (pad.axes[1] > 0.4) b |= 1 << BTN.indexOf("down");
+      if (b !== padBits) { padBits = b; send(); if (b && video.muted) video.muted = false; }
+    }
+    requestAnimationFrame(pollPad);
+  })();
+  peer = new Peer();
+  peer.on("open", () => {
+    conn = peer.connect(JOIN_ID);
+    conn.on("open", () => net("Connected. Click the game if there's no sound.", "ok"));
+    conn.on("close", () => net("The host closed the game.", "bad"));
+  });
+  peer.on("call", call => {
+    call.answer();
+    call.on("stream", s => { video.srcObject = s; video.play().catch(() => {}); });
+  });
+  peer.on("error", err => net("Couldn't connect (" + err.type + "). Ask your friend for a fresh link.", "bad"));
+  video.onclick = () => { video.muted = false; video.play(); };
+}
+
+if (JOIN_ID) {
+  startGuest();
+} else {
+  const wire = (dropId, inputId, fn) => {
+    const drop = document.getElementById(dropId), input = document.getElementById(inputId);
+    drop.onclick = () => input.click();
+    input.onchange = () => input.files[0] && fn(input.files[0]);
+    drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+    drop.ondragleave = () => drop.classList.remove("over");
+    drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); e.dataTransfer.files[0] && fn(e.dataTransfer.files[0]); };
+  };
+  wire("dropMk3", "fileMk3", setMk3);
+  wire("dropDkc", "fileDkc", setDkc);
+  document.getElementById("startBtn").onclick = start;
+  Object.assign(window, { setDkc, setMk3, start });   // for automated testing
+}
+</script>
+</body>
+</html>
