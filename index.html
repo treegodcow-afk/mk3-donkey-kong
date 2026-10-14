@@ -43,7 +43,7 @@
   <p class="host-only">Load your own dump of <em>Mortal Kombat 3 (USA)</em> plus <em>Donkey Kong Country (USA) (Rev 1)</em> and/or <em>Super Ghouls 'N Ghosts (USA)</em>. The page draws the guest fighters from those cartridges into MK3: Donkey Kong takes Sub-Zero's slot and Diddy Kong takes Kung Lao's (from DKC), and Arthur takes Nightwolf's (from Super Ghouls 'N Ghosts), each with their own poses, specials, portrait, name and sound. Two players on one keyboard, or invite a friend online. The game files never leave your browser.</p>
   <p class="guest-only">You're joining a friend's game as player 2. Their game streams to you here and your controls run player 2. Press Start (<kbd>Enter</kbd>) to join in.</p>
   <div class="drops host-only">
-    <div class="drop" id="dropMk3" tabindex="0"><b>Mortal Kombat 3 (USA)</b><br>drop the .sfc here or click<input type="file" id="fileMk3" accept=".sfc,.smc" hidden></div>
+    <div class="drop" id="dropMk3" tabindex="0"><b>Mortal Kombat 3 (USA)</b><br>or the finished guest-fighters game file<input type="file" id="fileMk3" accept=".sfc,.smc" hidden></div>
     <div class="drop" id="dropDkc" tabindex="0"><b>Donkey Kong Country (USA) (Rev 1)</b><br>for Donkey Kong and Diddy<input type="file" id="fileDkc" accept=".sfc,.smc" hidden></div>
     <div class="drop" id="dropSgng" tabindex="0"><b>Super Ghouls 'N Ghosts (USA)</b><br>for Arthur<input type="file" id="fileSgng" accept=".sfc,.smc" hidden></div>
   </div>
@@ -167,7 +167,7 @@ document.getElementById("invite").onclick = () => {
 };
 
 // ---- host setup: ROMs, build ----
-let dkcRom = null, mk3Rom = null, sgngRom = null;
+let dkcRom = null, mk3Rom = null, sgngRom = null, builtRom = null;
 // Verified game files are kept in this browser (IndexedDB, keyed by SHA-1) so they don't have to be
 // dropped in again. They never leave the computer; "Forget my game files" removes them.
 const romStore = {
@@ -180,12 +180,17 @@ const romStore = {
 };
 async function loadSaved() {
   let found = 0;
+  const built = await romStore.get("built");
+  if (built) { await setMk3(new Uint8Array(built)); found++; }
+  else
   for (const [hash, fn] of [[GOOD_SHA1, setDkc], [SGNG_SHA1, setSgng], [MK3_SHA1, setMk3]]) { const rom = await romStore.get(hash); if (rom) { await fn(new Uint8Array(rom)); found++; } }
   if (found) {
     const forget = document.getElementById("forgetRoms"); forget.hidden = false;
     forget.onclick = async e => { e.preventDefault(); await romStore.clear(); location.reload(); };
   }
 }
+// The finished game: an 8 MB expansion of MK3 (its header copy at $40:FFC0 says MORTAL KOMBAT 3).
+const isBuilt = rom => rom.length === 0x800000 && String.fromCharCode(...rom.subarray(0x40FFC0, 0x40FFCF)).startsWith("MORTAL KOMBAT 3");
 async function readRom(file) {
   if (file instanceof Uint8Array) return { rom: file, hash: await sha1Hex(file), saved: true };
   let rom = new Uint8Array(await file.arrayBuffer());
@@ -194,6 +199,15 @@ async function readRom(file) {
 }
 async function setMk3(file) {
   const { rom, hash } = await readRom(file);
+  if (hash !== MK3_SHA1 && isBuilt(rom)) {   // the finished game (MK3 with the guests already in): nothing else needed
+    builtRom = rom; romStore.put("built", rom);
+    document.getElementById("dropMk3").classList.add("done");
+    document.querySelectorAll("#dropDkc, #dropSgng").forEach(d => d.style.display = "none");
+    document.getElementById("useDk").parentElement.style.display = "none";
+    document.getElementById("select").style.display = "block";
+    say("Finished game file loaded: DK, Diddy and Arthur are already in. Start when ready.", "ok");
+    return;
+  }
   if (hash !== MK3_SHA1) { say("That file doesn't match the Mortal Kombat 3 (USA) dump this mod expects (SHA-1 " + hash.slice(0, 12) + "\u2026).", "bad"); return; }
   mk3Rom = rom;
   romStore.put(hash, rom);
@@ -220,7 +234,13 @@ async function setSgng(file) {
   say(mk3Rom ? "Games verified. Start when ready." : "Super Ghouls 'N Ghosts verified. Now add Mortal Kombat 3.", "ok");
 }
 async function start() {
-  if (engine || !mk3Rom) return;
+  if (engine || !(mk3Rom || builtRom)) return;
+  if (builtRom) {
+    document.querySelector(".drops").style.display = "none"; document.getElementById("select").style.display = "none";
+    try { await run(builtRom); say("Running. DK is in Sub-Zero's spot, Diddy in Kung Lao's, Arthur in Nightwolf's. Player 2 presses 2 (or Start on pad 2) to join.", "ok"); }
+    catch (err) { say("The emulator failed to start: " + err.message, "bad"); }
+    return;
+  }
   let rom = mk3Rom;
   const who = [dkcRom && "DK is in Sub-Zero's spot and Diddy in Kung Lao's", sgngRom && "Arthur is in Nightwolf's"].filter(Boolean);
   if ((dkcRom || sgngRom) && document.getElementById("useDk").checked) {
