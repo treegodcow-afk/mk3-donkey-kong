@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MK3 Donkey Kong</title>
+<title>MK3 Kongs</title>
 <style>
   :root { --bg:#0b0d14; --panel:#171a24; --text:#e8e9ec; --muted:#9aa0ab; --accent:#4fb3ff; --ok:#5fd68a; --bad:#ff6b6b; }
   @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg:#f4f4f6; --panel:#fff; --text:#16181d; --muted:#5d636e; } }
@@ -39,15 +39,15 @@
 </head>
 <body>
 <main>
-  <h1>Mortal Kombat 3, with Donkey Kong</h1>
-  <p class="host-only">Load your own dump of <em>Mortal Kombat 3 (USA)</em> and your <em>Donkey Kong Country (USA) (Rev 1)</em> dump. The page draws Donkey Kong from your DKC cartridge into MK3, in Sub-Zero's slot on the select screen (he fights with Sub-Zero's moves). Two players on one keyboard, or invite a friend online. The game files never leave your browser.</p>
+  <h1>Mortal Kombat 3, with Donkey Kong and Diddy Kong</h1>
+  <p class="host-only">Load your own dump of <em>Mortal Kombat 3 (USA)</em> and your <em>Donkey Kong Country (USA) (Rev 1)</em> dump. The page draws Donkey Kong and Diddy Kong from your DKC cartridge into MK3: DK takes Sub-Zero's slot and Diddy takes Kung Lao's, each with their own poses, specials, portrait, name and voice. Two players on one keyboard, or invite a friend online. The game files never leave your browser.</p>
   <p class="guest-only">You're joining a friend's game as player 2. Their game streams to you here and your controls run player 2. Press Start (<kbd>Enter</kbd>) to join in.</p>
   <div class="drops host-only">
     <div class="drop" id="dropMk3" tabindex="0"><b>Mortal Kombat 3 (USA)</b><br>drop the .sfc here or click<input type="file" id="fileMk3" accept=".sfc,.smc" hidden></div>
     <div class="drop" id="dropDkc" tabindex="0"><b>Donkey Kong Country (USA) (Rev 1)</b><br>for Donkey Kong<input type="file" id="fileDkc" accept=".sfc,.smc" hidden></div>
   </div>
   <div class="select host-only" id="select">
-    <label><input type="checkbox" id="useDk" checked disabled> Donkey Kong replaces Sub-Zero (needs the DKC file)</label><br>
+    <label><input type="checkbox" id="useDk" checked disabled> Add Donkey Kong and Diddy Kong (needs the DKC file)</label><br>
     <a href="#" id="forgetRoms" hidden style="margin-right:12px;font-size:14px">Forget my game files</a><button id="startBtn">Start the game</button>
   </div>
   <div id="status"></div>
@@ -212,15 +212,15 @@ async function start() {
   if (engine || !mk3Rom) return;
   let rom = mk3Rom;
   if (dkcRom && document.getElementById("useDk").checked) {
-    say("Drawing Donkey Kong from your DKC ROM\u2026", "ok");
-    const { buildDkMk3 } = await import("./dkinmk3.js?v=" + Date.now());
+    say("Drawing Donkey Kong and Diddy from your DKC ROM\u2026", "ok");
+    const { buildDkMk3 } = await import("./kongsmk3.js?v=" + Date.now());
     rom = buildDkMk3(mk3Rom, dkcRom).rom;
   }
   document.querySelector(".drops").style.display = "none";
   document.getElementById("select").style.display = "none";
   try {
     await run(rom);
-    say("Running. DK is in Sub-Zero's spot on the select screen. Player 2 presses 2 (or Start on pad 2) to join.", "ok");
+    say("Running. DK is in Sub-Zero's spot and Diddy in Kung Lao's. Player 2 presses 2 (or Start on pad 2) to join.", "ok");
   } catch (err) {
     say("The emulator failed to start: " + err.message, "bad");
   }
