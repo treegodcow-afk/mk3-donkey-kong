@@ -21,6 +21,11 @@ export const DKC = {
 export const KONGS = {
   dk: {
     name: "DONKEY KONG", setId: 8,                 // Sub-Zero's graphics set
+    fighterId: 4,                                  // Sub-Zero's fighter number ($51D6)
+    // Sub-Zero's attack records (bank $83) and the frame each one is checked on, recorded from play
+    attacks: [[0xDCDF, 51], [0xDD88, 57], [0xDCEC, 46], [0xDCC5, 72], [0xDD7B, 74], [0xDCD2, 70], [0xDD2D, 39],
+              [0xDD06, 34], [0xDD13, 44], [0xDD20, 41], [0xDD6E, 80], [0xDCF9, 167], [0xDD3A, 88], [0xDD47, 86],
+              [0xDD54, 87], [0xDD61, 88], [0xE2C2, 60], [0xE2DE, 76], [0xDDA2, 156]],
     palette: 0x3FB07F, kongPalette: 0x39B783,      // MK3 palette replaced / DK's DKC palette
     portraitPose: 0x61C, portraitTile: 0x107,      // select-screen portrait (VRAM tiles $107-$122)
     namesEntry: 4, freeTile: 120,                  // health-bar name strip
@@ -63,6 +68,10 @@ export const KONGS = {
   },
   diddy: {
     name: "DIDDY KONG", setId: 18,                 // Kung Lao's graphics set
+    fighterId: 9,
+    attacks: [[0xD7D5, 39], [0xD87E, 45], [0xD7E2, 55], [0xD7BB, 60], [0xD871, 62], [0xD7C8, 87], [0xD823, 36],
+              [0xD7FC, 27], [0xD809, 31], [0xD816, 29], [0xD864, 72], [0xD7EF, 79], [0xD830, 98], [0xD83D, 90],
+              [0xD84A, 99], [0xD857, 98]],
     palette: 0x3FB23F, kongPalette: 0x3C843E,
     portraitPose: 0xFD4, portraitTile: 0x193,      // VRAM tiles $193-$1AE
     namesEntry: 9, freeTile: 130,
@@ -125,6 +134,12 @@ export const MK3 = {
   voice: { prefix: 3, blocks: 341, rate: 6000 },
   // "<NAME> WINS" banners are frames of graphics set 38
   bannerSet: 38,
+  // Attack boxes: 13-byte records in bank $83 (reach, top, width, height as words in game units of
+  // 25/16 pixel; top counts from 60 px above the frame origin; then damage/reaction bytes), found via
+  // a per-fighter list at $83:D22B. The whole area is copied to bank $7D (whose upper half is only a
+  // mirror of bank $3D) and the one routine that sets the bank ($83:D221) points there, so the Kongs'
+  // records can be rewritten without touching anyone else's.
+  attackData: { bankByte: 0x03D222, copyFrom: 0x03C000, length: 0x4000, newBank: 0x7D, unit: 25 / 16, yBase: 60 },
   // New moves: down, down + high punch runs the fighter's uppercut with the Kong's own frames
   special: { padCall: 0x00888E, pads: 0x878000, newPress: 0x7E35D4, animStart: 0x06BCF7, animInit: 0x86DC30,
              uppercutAnim: 0x0B, window: 30, ram: 0x7EFFC0 },
@@ -409,7 +424,7 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
     rom[ba] = T; rom[ba + 1] = 0; rom[aa] = lo(at); rom[aa + 1] = hi(at); [ba, ba + 1, aa, aa + 1].forEach(mirror); };
   const setPalette = (dst, src) => { for (let i = 2; i < 32; i++) { rom[dst + i] = dkcRom[src + i]; mirror(dst + i); } };
   const stats = {};
-  const animEntries = [], specials = [];
+  const animEntries = [], specials = [], attackJobs = [];
   let animBank = 0, ap = 0;
   const animPut = bytes => { if (!animBank || ap + bytes.length > 0x8000) { animBank = bank++; ap = 0; } const a = ap; rom.set(bytes, exOff(animBank, ap)); ap += bytes.length; return [animBank, a]; };
 
@@ -528,6 +543,7 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
     setPalette(K.palette, K.kongPalette);
     if (P && P.slot) setPalette(P.slot, DKC[P.slotFrom]);
     stats[key] = { replaced, kept, tiles: tiles.length };
+    attackJobs.push({ K, recipe, frameAddr, boxes });
   }
 
   // ---- frame hook: new-move frames, then animated held frames ----
@@ -666,6 +682,30 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
     const desc2 = Uint8Array.from(mk3Rom.subarray(dOff2, dOff2 + 16));
     desc2[0] = lo(bAt); desc2[1] = hi(bAt); desc2[2] = lo(tAt); desc2[3] = hi(tAt); desc2[4] = T; desc2[5] = lo(fAt); desc2[6] = hi(fAt); desc2[7] = T;
     setDesc(setId, put(desc2));
+  }
+
+  // ---- attack boxes: each Kong's records follow his own fists and feet ----
+  {
+    const A = MK3.attackData, dst = 0x400000 + (A.newBank - 0x40) * 0x10000 + (A.copyFrom & 0xFFFF);
+    rom.set(mk3Rom.subarray(A.copyFrom, A.copyFrom + A.length), dst);
+    if (mk3Rom[A.bankByte] !== 0x83) throw new Error("unexpected attack bank code");
+    rom[A.bankByte] = A.newBank; mirror(A.bankByte);
+    const u = A.unit, s16 = v => (v << 16) >> 16;
+    for (const { K, recipe, frameAddr, boxes } of attackJobs) for (const [rec, frame] of K.attacks || []) {
+      const kb = boxes[frame]; if (!kb) continue;
+      let ob; try { const c = compose(buildFrame(mk3Rom, recipe, frameAddr(frame - 1))); ob = [c.ox, c.ox + c.w, c.oy, c.oy + c.h]; } catch { continue; }
+      const o = 0x030000 + rec, w = i => s16(mk3Rom[o + i * 2] | (mk3Rom[o + i * 2 + 1] << 8));
+      const [x, y, wd, ht] = [w(0), w(1), w(2), w(3)];
+      // reach: the box's far edge moves with the attacker's front edge
+      const nx = Math.round(x + (kb[1] - ob[1]) * u);
+      // height: same place relative to the body (head height stays head height), scaled to the Kong
+      const oh = ob[3] - ob[2], kh = kb[3] - kb[2], f = Math.max(0.6, Math.min(1.5, kh / oh));
+      const centre = (y + ht / 2) / u - A.yBase, frac = (centre - ob[2]) / oh;
+      const nh = Math.round(ht * f), ny = Math.round((kb[2] + frac * kh + A.yBase) * u - nh / 2);
+      const put16 = (i, v) => { const a = dst + (rec - (A.copyFrom & 0xFFFF)) + i * 2; rom[a] = v & 0xFF; rom[a + 1] = (v >> 8) & 0xFF; };
+      put16(0, nx); put16(1, ny); put16(3, nh);
+      (stats.attacks = stats.attacks || []).push(`${K.name.split(" ")[0]} ${rec.toString(16)}@${frame}: reach ${x}->${nx} top ${y}->${ny} h ${ht}->${nh}`);
+    }
   }
 
   fixChecksum(rom);
