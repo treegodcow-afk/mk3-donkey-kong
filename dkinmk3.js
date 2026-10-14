@@ -13,6 +13,7 @@ export const DK_RECIPE = {
   dkc: {
     frameTable: 0x3BCC9C,          // file offset; 4 bytes per frame id (addr16, bank, y)
     palette: 0x39B783,             // file offset of DK's sprite palette (colour 0)
+    bananaPalette: 0x3C86F0,       // the bananas' sprite palette (colour 0)
     poses: {
       stand:  [0xBC, 0xC0, 0xC4, 0xC8, 0xCC, 0xD0, 0xD4, 0xD8],
       walk:   [0xE0, 0xE8, 0xF0, 0xF8, 0x100, 0x108, 0x110, 0x118, 0x120, 0x128],
@@ -27,6 +28,8 @@ export const DK_RECIPE = {
       lunge:  [0x774, 0x778, 0x77C, 0x780],
       block:  [0x638],
       win:    [0x61C, 0x620, 0x624, 0x628],
+      throw:  [0x224, 0x234],
+      banana: [0x1928, 0x192C, 0x1930, 0x1934, 0x1938, 0x193C, 0x1940, 0x1944],   // a spinning banana
       hurt:   [0x40C, 0x410, 0x414, 0x418, 0x41C, 0x420],
       down:   [0x38C, 0x390],
     },
@@ -36,13 +39,19 @@ export const DK_RECIPE = {
     tileTable: 0xFFCDA5, tileEntries: 45, aux62: 0xFFF7C0, aux66: 0xFFF7CF,
     frames: 0xFEFC6A, banks: 0xFEFE64, count: 253,
     palette: 0x3FB07F,             // file offset of Sub-Zero's palette (colour 0)
+    iceBallPalette: 0x3FB0DF,      // the ice ball's palette (colour 0)
+    projectile: [212, 221],        // the ice ball: drawn as a big banana
+    bananaHold: 217,               // the frame it holds while flying (animated as a spinning banana)
+    poseScale: { banana: 3 },
+    // the thrower and the ice ball share the fighter's VRAM area, so both stay smaller then
+    poseLimit: { throw: 16, banana: 12 },
     scale: 1.6, ground: 43, feetX: 6,          // feet position in frame coordinates (from the stance)
     maxPieces: 24,                 // 16x16 pieces that fit the fighter's VRAM area
     // Sub-Zero frame numbers by move, recorded from play (the rest go by outline)
     moves: [[3, 9, "stand"], [10, 24, "walk"], [25, 25, "stand"], [26, 32, "crouch"], [33, 39, "upper"],
             [40, 44, "slap"], [45, 63, "punch"], [64, 65, "block"], [66, 76, "lunge"], [77, 83, "lunge"],
             [84, 84, "roll"], [85, 85, "jump"], [86, 88, "roll"], [89, 95, "roll"], [96, 123, "hurt"],
-            [163, 169, "slap"], [156, 156, "rolling"]],
+            [163, 169, "slap"], [156, 156, "rolling"], [144, 144, "throw"]],
     effectsFrom: 186,              // frames 186+ are ice, sparks, body parts: drawn by MK3 as before
     slide: 156,                    // Sub-Zero's slide: shown as DK's animated roll (see the hook below)
     counter: 0x7E1A0A,             // counts up once per frame
@@ -114,6 +123,13 @@ function category(b, ground) {
   return "stand";
 }
 
+// A frame stream: every piece 16x16, explicit x/y bytes, four tile words.
+function stream(pose, feetX, feetY) {
+  const s = [pose.length, pose.length];
+  for (const c of pose) { s.push(0, (feetX + c.x) & 0xFF, (feetY + c.y) & 0xFF); for (const w of c.w) s.push(w & 0xFF, w >> 8); }
+  return Uint8Array.from(s);
+}
+
 // Length of an original frame stream (to copy it unchanged).
 function streamLength(mk3, addr) {
   const p0 = off(addr); let p = p0 + 2;
@@ -149,7 +165,8 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
   // every pose at DK's size (M.scale), shrunk only if that one pose would not fit the VRAM budget
   const scale = M.scale, poses = {};
   for (const [cat, list] of Object.entries(base)) poses[cat] = list.map(p => {
-    for (let s = scale; ; s -= 0.05) { const c = cells(scaled(p, s)); if (c.length <= M.maxPieces || s < 1) return c; }
+    const limit = M.poseLimit[cat] || M.maxPieces;
+    for (let s = M.poseScale[cat] || scale; ; s -= 0.05) { const c = cells(scaled(p, s)); if (c.length <= limit || s < 1) return c; }
   });
 
   // tiles: deduplicated, 256 per table entry, entries after Sub-Zero's own
@@ -177,7 +194,7 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
   // a frame stream per Sub-Zero frame number; every group of 64 shares a bank
   const fr = M.frames, frOff = off(fr), btOff = off(M.banks);
   const addrs = new Uint16Array(M.count), banks = [];
-  const counters = {}; let replaced = 0, kept = 0;
+  const counters = {}, placed = {}; let replaced = 0, kept = 0;
   for (let g = 0; g * 64 < M.count; g++, bank++) {
     banks.push(bank); let p = 0;
     for (let i = g * 64; i < Math.min(M.count, g * 64 + 64); i++) {
@@ -185,34 +202,37 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
       let bytes;
       let b = null;
       try { const f = buildFrame(mk3Rom, M, orig), c = compose(f); b = { ...c, tiles: f.n16 * 4 + f.n8 }; } catch { b = null; }
-      let cat = b && i + 1 < M.effectsFrom && category(b, M.ground);
+      const isBanana = b && i + 1 >= M.projectile[0] && i + 1 <= M.projectile[1];
+      let cat = isBanana ? "banana" : b && i + 1 < M.effectsFrom && category(b, M.ground);
       const mv = cat && M.moves.find(([lo, hi]) => i + 1 >= lo && i + 1 <= hi);
-      if (mv) cat = mv[2] === "hurt" && cat === "down" ? "down" : mv[2];
+      if (mv && !isBanana) cat = mv[2] === "hurt" && cat === "down" ? "down" : mv[2];
       if (!cat) {
         const o = off(orig); bytes = mk3Rom.subarray(o, o + streamLength(mk3Rom, orig)); kept++;
       } else {
         const list = poseWords[cat], n = counters[cat] = (counters[cat] || 0) + 1, pose = list[n % list.length];
         const grounded = !["jump", "roll", "hurt", "down"].includes(cat) && b.oy + b.h >= M.ground - 6;
-        const feetX = grounded ? M.feetX : Math.round(b.ox + b.w / 2), feetY = Math.min(M.ground, b.oy + b.h);
-        const s = [pose.length, pose.length];
-        for (const c of pose) { s.push(0, (feetX + c.x) & 0xFF, (feetY + c.y) & 0xFF); for (const w of c.w) s.push(w & 0xFF, w >> 8); }
-        bytes = Uint8Array.from(s); replaced++;
+        let feetX = grounded ? M.feetX : Math.round(b.ox + b.w / 2), feetY = Math.min(M.ground, b.oy + b.h);
+        if (isBanana) {   // centred on the ice ball, at its leading end
+          const top = Math.min(...pose.map(c => c.y));
+          feetX = b.ox + b.w - 24; feetY = Math.round(b.oy + b.h / 2 - top / 2);
+        }
+        placed[i + 1] = { feetX, feetY };
+        bytes = stream(pose, feetX, feetY); replaced++;
       }
       if (p + bytes.length > 0x8000) throw new Error("frame bank full");
       rom.set(bytes, exOff(bank, p)); addrs[i] = p; p += bytes.length;
     }
   }
 
-  // DK's roll: eight streams, and a hook that swaps the slide frame for one of them each time
-  // the fighter is drawn (picked by a frame counter), then marks the frame as changed so the game
-  // draws it again next frame.
-  const rollBank = bank++, rollAddrs = []; let rp = 0;
-  for (const pose of poseWords.rolling) {
-    const s = [pose.length, pose.length];
-    for (const c of pose) { s.push(0, (M.feetX + c.x) & 0xFF, (M.ground + c.y) & 0xFF); for (const w of c.w) s.push(w & 0xFF, w >> 8); }
-    rom.set(s, exOff(rollBank, rp)); rollAddrs.push(rp); rp += s.length;
-  }
-  const slideAddr = addrs[M.slide - 1], slideBank = banks[(M.slide - 1) >> 6];
+  // Animated frames: while the game holds one of these frames (the slide, the ice ball in flight),
+  // a hook swaps in one of eight streams each time the object is drawn (picked by a frame counter)
+  // and marks the frame as changed so the game draws it again next frame.
+  const animBank = bank++; let ap = 0;
+  const anims = [
+    { frame: M.slide, poses: poseWords.rolling, at: { feetX: M.feetX, feetY: M.ground } },
+    { frame: M.bananaHold, poses: poseWords.banana, at: placed[M.bananaHold] },
+  ].map(a => ({ ...a, addr: addrs[a.frame - 1], bank: banks[(a.frame - 1) >> 6],
+    streams: a.poses.slice(0, 8).map(pose => { const st = stream(pose, a.at.feetX, a.at.feetY), at = ap; rom.set(st, exOff(animBank, ap)); ap += st.length; return at; }) }));
 
   // descriptor + tables in bank $40
   // (bytes changed in the first 4 MB are also copied to the bank $00-$3F copy, in case they are read from there)
@@ -228,34 +248,40 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
   desc[2] = tableAt & 0xFF; desc[3] = tableAt >> 8; desc[4] = T;
   desc[5] = framesAt & 0xFF; desc[6] = framesAt >> 8; desc[7] = T;
   const descAt = put(desc);
-  const rollTableAt = put(new Uint8Array(Uint16Array.from(rollAddrs).buffer));
   const lo = v => v & 0xFF, hi = v => (v >> 8) & 0xFF, cnt = M.counter;
-  const hook = [
-    0xBF, 0x8A, 0x24, 0x7E,                       // lda f:$7E248A,x   frame stream address
-    0xC9, lo(slideAddr), hi(slideAddr),           // cmp #slide
-    0xD0, 0x2D,                                   // bne go
-    0xBF, 0xA2, 0x24, 0x7E,                       // lda f:$7E24A2,x
-    0x29, 0xFF, 0x00,                             // and #$00FF
-    0xC9, slideBank, 0x00,                        // cmp #bank
-    0xD0, 0x21,                                   // bne go
-    0xAF, lo(cnt), hi(cnt), cnt >> 16,            // lda f:counter
-    0x4A,                                         // lsr
-    0x29, 0x0E, 0x00,                             // and #$000E   (changes every 2 frames, 8 poses)
-    0xDA, 0xAA,                                   // phx / tax
-    0xBF, lo(rollTableAt), hi(rollTableAt), T,    // lda f:rollTable,x
-    0xFA,                                         // plx
-    0x9F, 0x8A, 0x24, 0x7E,                       // sta f:$7E248A,x
-    0xA9, rollBank, 0x00,                         // lda #rollBank
-    0x9F, 0xA2, 0x24, 0x7E,                       // sta f:$7E24A2,x
-    0xA9, 0x00, 0x00,                             // lda #0
-    0x9F, 0xBE, 0x52, 0x7E,                       // sta f:$7E52BE,x  -> redraw next frame
-    0x5C, 0x00, 0x80, 0x82,                       // go: jml sub_C28000
-  ];
+  const hook = [];
+  for (const a of anims) {
+    const tableAt = put(new Uint8Array(Uint16Array.from(a.streams).buffer));
+    hook.push(
+      0xBF, 0x8A, 0x24, 0x7E,                     // lda f:$7E248A,x   frame stream address
+      0xC9, lo(a.addr), hi(a.addr),               // cmp #frame
+      0xD0, 0x31,                                 // bne next
+      0xBF, 0xA2, 0x24, 0x7E,                     // lda f:$7E24A2,x
+      0x29, 0xFF, 0x00,                           // and #$00FF
+      0xC9, a.bank, 0x00,                         // cmp #bank
+      0xD0, 0x25,                                 // bne next
+      0xAF, lo(cnt), hi(cnt), cnt >> 16,          // lda f:counter
+      0x4A,                                       // lsr
+      0x29, 0x0E, 0x00,                           // and #$000E   (changes every 2 frames, 8 streams)
+      0xDA, 0xAA,                                 // phx / tax
+      0xBF, lo(tableAt), hi(tableAt), T,          // lda f:table,x
+      0xFA,                                       // plx
+      0x9F, 0x8A, 0x24, 0x7E,                     // sta f:$7E248A,x
+      0xA9, animBank, 0x00,                       // lda #animBank
+      0x9F, 0xA2, 0x24, 0x7E,                     // sta f:$7E24A2,x
+      0xA9, 0x00, 0x00,                           // lda #0
+      0x9F, 0xBE, 0x52, 0x7E,                     // sta f:$7E52BE,x  -> redraw next frame
+      0x5C, 0x00, 0x80, 0x82);                    // jml sub_C28000
+  }                                               // next:
+  hook.push(0x5C, 0x00, 0x80, 0x82);              // jml sub_C28000
   const hookAt = put(Uint8Array.from(hook));
   for (const site of M.callSites) { if (mk3Rom[site + 1] !== 0x00 || mk3Rom[site + 2] !== 0x80 || mk3Rom[site + 3] !== 0x82) throw new Error("unexpected code at " + site.toString(16)); rom[site + 1] = lo(hookAt); rom[site + 2] = hi(hookAt); rom[site + 3] = T; [1, 2, 3].forEach(k => mirror(site + k)); }
   const ba = off(M.descBanks + M.setId), aa = off(M.descAddrs + M.setId);
   rom[ba] = T; rom[ba + 1] = 0; rom[aa] = descAt & 0xFF; rom[aa + 1] = descAt >> 8;
   [ba, ba + 1, aa, aa + 1].forEach(mirror);
+
+  // banana yellow for the ice ball
+  for (let i = 1; i < 16; i++) { rom[M.iceBallPalette + i * 2] = dkcRom[D.bananaPalette + i * 2]; rom[M.iceBallPalette + i * 2 + 1] = dkcRom[D.bananaPalette + i * 2 + 1]; mirror(M.iceBallPalette + i * 2); mirror(M.iceBallPalette + i * 2 + 1); }
 
   // DK's colours
   for (let i = 1; i < 16; i++) { rom[M.palette + i * 2] = dkcRom[D.palette + i * 2]; rom[M.palette + i * 2 + 1] = dkcRom[D.palette + i * 2 + 1]; mirror(M.palette + i * 2); mirror(M.palette + i * 2 + 1); }
