@@ -18,6 +18,7 @@ export const DK_RECIPE = {
       walk:   [0xE0, 0xE8, 0xF0, 0xF8, 0x100, 0x108, 0x110, 0x118, 0x120, 0x128],
       jump:   [0x130, 0x138, 0x140, 0x148, 0x150, 0x158],
       roll:   [0x4B8, 0x4C0, 0x4C8, 0x4D0, 0x4D8, 0x4E0],
+      rolling: [0x4C0, 0x4C4, 0x4C8, 0x4CC, 0x4D0, 0x4D4, 0x4D8, 0x4DC],   // DK's real roll, in order
       crouch: [0x4EC, 0x5D4],
       attack: [0x614, 0x770, 0x774, 0x778],
       punch:  [0x220, 0x224, 0x234, 0x238],
@@ -41,7 +42,10 @@ export const DK_RECIPE = {
     moves: [[3, 9, "stand"], [10, 24, "walk"], [25, 25, "stand"], [26, 32, "crouch"], [33, 39, "upper"],
             [40, 44, "slap"], [45, 63, "punch"], [64, 65, "block"], [66, 76, "lunge"], [77, 83, "lunge"],
             [84, 84, "roll"], [85, 85, "jump"], [86, 88, "roll"], [89, 95, "roll"], [96, 123, "hurt"],
-            [163, 169, "slap"]],
+            [163, 169, "slap"], [156, 156, "rolling"]],
+    slide: 156,                    // Sub-Zero's slide: shown as DK's animated roll (see the hook below)
+    counter: 0x7E1A0A,             // counts up once per frame
+    callSites: [0x06EB05, 0x06EB53],   // file offsets of the two "jsl/jml sub_C28000" after a frame pick
   },
 };
 
@@ -198,7 +202,20 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
     }
   }
 
+  // DK's roll: eight streams, and a hook that swaps the slide frame for one of them each time
+  // the fighter is drawn (picked by a frame counter), then marks the frame as changed so the game
+  // draws it again next frame.
+  const rollBank = bank++, rollAddrs = []; let rp = 0;
+  for (const pose of poseWords.rolling) {
+    const s = [pose.length, pose.length];
+    for (const c of pose) { s.push(0, (M.feetX + c.x) & 0xFF, (M.ground + c.y) & 0xFF); for (const w of c.w) s.push(w & 0xFF, w >> 8); }
+    rom.set(s, exOff(rollBank, rp)); rollAddrs.push(rp); rp += s.length;
+  }
+  const slideAddr = addrs[M.slide - 1], slideBank = banks[(M.slide - 1) >> 6];
+
   // descriptor + tables in bank $40
+  // (bytes changed in the first 4 MB are also copied to the bank $00-$3F copy, in case they are read from there)
+  const mirror = o => { const b = o >> 16, a = o & 0xFFFF; if (a >= 0x8000 && b < 0x40) rom[0x400000 + o] = rom[o]; };
   const T = 0x40; let q = 0;
   const put = bytes => { const a = q; rom.set(bytes, exOff(T, q)); q += bytes.length; return a; };
   const tableAt = put(table);
@@ -210,15 +227,38 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
   desc[2] = tableAt & 0xFF; desc[3] = tableAt >> 8; desc[4] = T;
   desc[5] = framesAt & 0xFF; desc[6] = framesAt >> 8; desc[7] = T;
   const descAt = put(desc);
+  const rollTableAt = put(new Uint8Array(Uint16Array.from(rollAddrs).buffer));
+  const lo = v => v & 0xFF, hi = v => (v >> 8) & 0xFF, cnt = M.counter;
+  const hook = [
+    0xBF, 0x8A, 0x24, 0x7E,                       // lda f:$7E248A,x   frame stream address
+    0xC9, lo(slideAddr), hi(slideAddr),           // cmp #slide
+    0xD0, 0x2D,                                   // bne go
+    0xBF, 0xA2, 0x24, 0x7E,                       // lda f:$7E24A2,x
+    0x29, 0xFF, 0x00,                             // and #$00FF
+    0xC9, slideBank, 0x00,                        // cmp #bank
+    0xD0, 0x21,                                   // bne go
+    0xAF, lo(cnt), hi(cnt), cnt >> 16,            // lda f:counter
+    0x4A,                                         // lsr
+    0x29, 0x0E, 0x00,                             // and #$000E   (changes every 2 frames, 8 poses)
+    0xDA, 0xAA,                                   // phx / tax
+    0xBF, lo(rollTableAt), hi(rollTableAt), T,    // lda f:rollTable,x
+    0xFA,                                         // plx
+    0x9F, 0x8A, 0x24, 0x7E,                       // sta f:$7E248A,x
+    0xA9, rollBank, 0x00,                         // lda #rollBank
+    0x9F, 0xA2, 0x24, 0x7E,                       // sta f:$7E24A2,x
+    0xA9, 0x00, 0x00,                             // lda #0
+    0x9F, 0xBE, 0x52, 0x7E,                       // sta f:$7E52BE,x  -> redraw next frame
+    0x5C, 0x00, 0x80, 0x82,                       // go: jml sub_C28000
+  ];
+  const hookAt = put(Uint8Array.from(hook));
+  for (const site of M.callSites) { if (mk3Rom[site + 1] !== 0x00 || mk3Rom[site + 2] !== 0x80 || mk3Rom[site + 3] !== 0x82) throw new Error("unexpected code at " + site.toString(16)); rom[site + 1] = lo(hookAt); rom[site + 2] = hi(hookAt); rom[site + 3] = T; [1, 2, 3].forEach(k => mirror(site + k)); }
   const ba = off(M.descBanks + M.setId), aa = off(M.descAddrs + M.setId);
   rom[ba] = T; rom[ba + 1] = 0; rom[aa] = descAt & 0xFF; rom[aa + 1] = descAt >> 8;
-  // the same bytes in the bank $00-$3F copy, in case they are read from there
-  const mirror = o => { const b = o >> 16, a = o & 0xFFFF; if (a >= 0x8000 && b < 0x40) rom[0x400000 + o] = rom[o]; };
   [ba, ba + 1, aa, aa + 1].forEach(mirror);
 
   // DK's colours
   for (let i = 1; i < 16; i++) { rom[M.palette + i * 2] = dkcRom[D.palette + i * 2]; rom[M.palette + i * 2 + 1] = dkcRom[D.palette + i * 2 + 1]; mirror(M.palette + i * 2); mirror(M.palette + i * 2 + 1); }
 
   fixChecksum(rom);
-  return { rom, stats: { replaced, kept, tiles: tiles.length, entries, scale: +scale.toFixed(2), banksUsed: bank - 0x40 } };
+  return { rom, stats: { replaced, kept, tiles: tiles.length, entries, scale, banksUsed: bank - 0x40 } };
 }
