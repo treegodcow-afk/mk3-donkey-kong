@@ -14,6 +14,7 @@ export const DK_RECIPE = {
     frameTable: 0x3BCC9C,          // file offset; 4 bytes per frame id (addr16, bank, y)
     palette: 0x39B783,             // file offset of DK's sprite palette (colour 0)
     bananaPalette: 0x3C86F0,       // the bananas' sprite palette (colour 0)
+    portraitPose: 0x61C,           // DK facing the camera, for the select-screen portrait
     poses: {
       stand:  [0xBC, 0xC0, 0xC4, 0xC8, 0xCC, 0xD0, 0xD4, 0xD8],
       walk:   [0xE0, 0xE8, 0xF0, 0xF8, 0x100, 0x108, 0x110, 0x118, 0x120, 0x128],
@@ -52,7 +53,16 @@ export const DK_RECIPE = {
     moves: [[3, 9, "stand"], [10, 24, "walk"], [25, 25, "stand"], [26, 32, "crouch"], [33, 39, "upper"],
             [40, 44, "slap"], [45, 63, "punch"], [64, 65, "block"], [66, 76, "lunge"], [77, 83, "lunge"],
             [84, 84, "roll"], [85, 85, "jump"], [86, 88, "roll"], [89, 95, "roll"], [96, 123, "hurt"],
-            [163, 169, "slap"], [156, 156, "rolling"], [144, 144, "throw"]],
+            [163, 169, "slap"], [156, 156, "rolling"], [144, 144, "throw"], [140, 142, "win"]],   // 140-142: picked on the select screen
+    // Select screen: one 8bpp picture unpacked from $C3:0000 into RAM at $7F:3B00, then copied to
+    // VRAM. Sub-Zero's portrait is 4x7 tiles (VRAM tiles $107-$122) = $7F:6CC0 in that buffer.
+    select: { unpackCall: 0x02C217, unpacker: 0x86E41A, fillCall: 0x02C238, filler: 0x82C4DC, source: 0xC30000, portraitRam: 0x7F6CC0, w: 32, h: 56,
+              // its colours 1-127: 1-47 at $3F9090 + 2c, 48-127 at $3F90F4 + 2(c-48)
+              palette: c => (c < 48 ? 0x3F9090 + 2 * c : 0x3F90F4 + 2 * (c - 48)) },
+    // Fight name bar: every name is in one strip picture unpacked from $F6:0396 to $7F:5300 (call at
+    // $80:FF0A); a table at $80:FF0F gives each name's (first tile, tiles, padding). Sub-Zero is entry
+    // 4. DK's name goes in after the last name (which ends at tile 114) and entry 4 points at it.
+    names: { unpackCall: 0x00FF0A, buffer: 0x7F5300, table: 0x00FF0F, entry: 4, freeTile: 120 },
     effectsFrom: 186,              // frames 186+ are ice, sparks, body parts: drawn by MK3 as before
     slide: 156,                    // Sub-Zero's slide: shown as DK's animated roll (see the hook below)
     counter: 0x7E1A0A,             // counts up once per frame
@@ -133,6 +143,67 @@ function tileBytes(px, ox, oy) {                       // 8x8 of a 16x16 cell ->
     if (v & 1) t[y * 2] |= m; if (v & 2) t[y * 2 + 1] |= m; if (v & 4) t[16 + y * 2] |= m; if (v & 8) t[16 + y * 2 + 1] |= m;
   }
   return t;
+}
+
+// DK's select-screen portrait: his chest-beat pose, head and shoulders, in the select screen's own
+// colours, as 8bpp tiles (4 across, 7 down).
+export function dkPortrait(mk3, dkc, D, sel) {
+  const pose = dkPose(dkc, D.frameTable, D.portraitPose);
+  const rgb = w => [(w & 31) << 3, ((w >> 5) & 31) << 3, ((w >> 10) & 31) << 3];
+  const dk = []; for (let i = 0; i < 16; i++) dk.push(rgb(dkc[D.palette + i * 2] | (dkc[D.palette + i * 2 + 1] << 8)));
+  // colours 128+ are sprite colours that change with the cursor, so only 1-127 are used
+  const pal = []; for (let c = 1; c < 128; c++) if (c % 16) { const o = sel.palette(c); pal.push([c, rgb(mk3[o] | (mk3[o + 1] << 8))]); }
+  const nearest = ([r, g, b]) => { let best = 1, bd = 1e9; for (const [c, [R, G, B]] of pal) { const d = (r - R) ** 2 * 3 + (g - G) ** 2 * 4 + (b - B) ** 2 * 2; if (d < bd) { bd = d; best = c; } } return best; };
+  const bg = nearest([24, 16, 32]), bg2 = nearest([56, 40, 64]);
+  // scale the pose so it is 34 px wide, keep the top (head and shoulders), centred
+  const s = 34 / pose.w, out = new Uint8Array(sel.w * sel.h);
+  for (let y = 0; y < sel.h; y++) for (let x = 0; x < sel.w; x++) {
+    const sx = Math.floor((x - sel.w / 2) / s + pose.w / 2), sy = Math.floor((y - 6) / s);
+    const v = sx >= 0 && sx < pose.w && sy >= 0 && sy < pose.h ? pose.data[sy * pose.w + sx] : 0;
+    out[y * sel.w + x] = v ? nearest(dk[v]) : (y > sel.h * 0.6 ? bg2 : bg);
+  }
+  const tiles = new Uint8Array((sel.w / 8) * (sel.h / 8) * 64);
+  for (let y = 0; y < sel.h; y++) for (let x = 0; x < sel.w; x++) {
+    const t = (y >> 3) * (sel.w / 8) + (x >> 3), c = out[y * sel.w + x], m = 1 << (7 - (x & 7));
+    for (let p = 0; p < 8; p++) if (c & (1 << p)) tiles[t * 64 + (p >> 1) * 16 + (y & 7) * 2 + (p & 1)] |= m;
+  }
+  return tiles;
+}
+
+// "DONKEY KONG" for the fight name bar: an 80x8 2bpp strip in the style of MK3's names (slanted,
+// colour 3 body, colour 2 left edges, colour 1 shadow). The letters are drawn here, not taken from
+// either game.
+const GLYPHS = {
+  D: ["####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."],
+  O: [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
+  N: ["#...#", "##..#", "##..#", "#.#.#", "#..##", "#..##", "#...#"],
+  K: ["#..#.", "#.#..", "##...", "##...", "#.#..", "#..#.", "#...#"],
+  E: ["#####", "#....", "#....", "####.", "#....", "#....", "#####"],
+  Y: ["#...#", "#...#", ".#.#.", "..#..", "..#..", "..#..", "..#.."],
+  G: [".###.", "#...#", "#....", "#.###", "#...#", "#...#", ".####"],
+};
+export function nameStrip(text = "DONKEY KONG") {
+  const W = 80, px = new Uint8Array(W * 8), slant = [2, 2, 1, 1, 1, 0, 0];
+  let x = 1;
+  for (const ch of text) {
+    if (ch === " ") { x += 4; continue; }
+    const g = GLYPHS[ch];
+    for (let r = 0; r < 7; r++) for (let c = 0; c < 5; c++) if (g[r][c] === "#") {
+      // two pixels thick horizontally, like the game's bold letters
+      for (const dx of [0, 1]) { const X = x + c + dx + slant[r]; if (X < W) px[(r + 1) * W + X] = 3; }
+    }
+    x += 7;
+  }
+  // left edges darker, shadow to the left and above
+  for (let y = 0; y < 8; y++) for (let X = 0; X < W; X++) if (px[y * W + X] === 3 && (X === 0 || px[y * W + X - 1] === 0)) px[y * W + X] = 2;
+  for (let y = 0; y < 8; y++) for (let X = 0; X < W; X++) if (px[y * W + X] >= 2) {
+    if (X > 0 && px[y * W + X - 1] === 0) px[y * W + X - 1] = 1;
+    if (y > 0 && px[(y - 1) * W + X] === 0) px[(y - 1) * W + X] = 1;
+  }
+  const out = new Uint8Array(160);
+  for (let y = 0; y < 8; y++) for (let X = 0; X < W; X++) { const c = px[y * W + X], t = X >> 3, m = 1 << (7 - (X & 7));
+    if (c & 1) out[t * 16 + y * 2] |= m; if (c & 2) out[t * 16 + y * 2 + 1] |= m; }
+  return out;
 }
 
 // Which DK pose a Sub-Zero frame becomes, from its outline.
@@ -256,6 +327,7 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
   const anims = [
     { frame: M.slide, poses: poseWords.rolling, at: { feetX: M.feetX, feetY: M.ground } },
     { frame: M.bananaHold, poses: poseWords.banana, at: placed[M.bananaHold] },
+    { frame: 142, poses: [...poseWords.win, ...poseWords.win], at: placed[142] },   // chest-beat after being picked
   ].map(a => ({ ...a, addr: addrs[a.frame - 1], bank: banks[(a.frame - 1) >> 6],
     streams: a.poses.slice(0, 8).map(pose => { const st = stream(pose, a.at.feetX, a.at.feetY), at = ap; rom.set(st, exOff(animBank, ap)); ap += st.length; return at; }) }));
 
@@ -304,6 +376,66 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
   const ba = off(M.descBanks + M.setId), aa = off(M.descAddrs + M.setId);
   rom[ba] = T; rom[ba + 1] = 0; rom[aa] = descAt & 0xFF; rom[aa + 1] = descAt >> 8;
   [ba, ba + 1, aa, aa + 1].forEach(mirror);
+
+  // select-screen portrait: after the select picture is unpacked into RAM, copy DK's tiles over
+  // Sub-Zero's (a wrapper around the unpack call; other pictures pass straight through)
+  const S = M.select, portrait = dkPortrait(mk3Rom, dkcRom, D, S), portraitAt = put(portrait);
+  const wrap = [
+    0xA5, 0x7C, 0x48, 0xA5, 0x7A, 0x48,                         // push the source pointer (bank, low word)
+    0x22, lo(S.unpacker), hi(S.unpacker), S.unpacker >> 16,     // jsl unpack
+    0xC2, 0x30, 0x48,                                           // rep #$30 / pha (result)
+    0xA3, 0x03, 0xC9, lo(S.source), hi(S.source),               // lda 3,s / cmp #source low
+    0xD0, 0x1C,                                                 // bne done
+    0xA3, 0x05, 0x29, 0xFF, 0x00, 0xC9, S.source >> 16, 0x00,   // lda 5,s / and #$FF / cmp #source bank
+    0xD0, 0x12,                                                 // bne done
+    0x8B, 0xDA, 0x5A,                                           // phb / phx / phy
+    0xA2, lo(portraitAt), hi(portraitAt),                       // ldx #tiles
+    0xA0, lo(S.portraitRam), hi(S.portraitRam),                 // ldy #buffer position
+    0xA9, lo(portrait.length - 1), hi(portrait.length - 1),     // lda #length-1
+    0x54, S.portraitRam >> 16, T,                               // mvn
+    0x7A, 0xFA, 0xAB,                                           // ply / plx / plb
+    0xA3, 0x01, 0x83, 0x05, 0x68, 0x68, 0x68,                   // done: keep the result, drop the rest
+    0x6B,                                                       // rtl
+  ];
+  const wrapAt = put(Uint8Array.from(wrap));
+  { const c = S.unpackCall; if (mk3Rom[c] !== 0x22 || mk3Rom[c + 1] !== lo(S.unpacker)) throw new Error("unexpected code at select unpack");
+    rom[c + 1] = lo(wrapAt); rom[c + 2] = hi(wrapAt); rom[c + 3] = T; [1, 2, 3].forEach(k => mirror(c + k)); }
+
+  // The game then runs its own pass over the picture (jsl $82C4DC), which would scramble DK's
+  // tiles, so this second wrapper checks (before that pass) whether the buffer holds DK's tiles,
+  // and if so copies them in again after it.
+  const K = 10 * 64, tag = portraitAt + K, ram = S.portraitRam + K;
+  const asm = [], labels = {}, fixups = [];
+  const emit = (...b) => asm.push(...b), br = (op, l) => { emit(op, 0); fixups.push([asm.length - 1, l]); }, label = l => { labels[l] = asm.length; };
+  emit(0xC2, 0x30, 0x48, 0xDA);                                 // rep #$30 / pha / phx
+  emit(0xA9, 0x00, 0x00, 0x48);                                 // flag = 0
+  emit(0xAF, lo(ram), hi(ram), ram >> 16, 0xCF, lo(tag), hi(tag), T); br(0xD0, "go");
+  emit(0xAF, lo(ram + 2), hi(ram + 2), ram >> 16, 0xCF, lo(tag + 2), hi(tag + 2), T); br(0xD0, "go");
+  emit(0xA9, 0x01, 0x00, 0x83, 0x01);                           // flag = 1
+  label("go");
+  emit(0xA3, 0x03, 0xAA, 0xA3, 0x05);                           // the step's X and A, as passed in
+  emit(0x22, lo(S.filler), hi(S.filler), S.filler >> 16);       // jsl the game's step
+  emit(0xC2, 0x30, 0x68); br(0xF0, "out");                      // pla flag / beq out
+  emit(0x8B, 0xA2, lo(portraitAt), hi(portraitAt), 0xA0, lo(S.portraitRam), hi(S.portraitRam),
+       0xA9, lo(portrait.length - 1), hi(portrait.length - 1), 0x54, S.portraitRam >> 16, T, 0xAB);
+  label("out");
+  emit(0x68, 0x68, 0x6B);                                       // drop X and A / rtl
+  for (const [at, l] of fixups) asm[at] = (labels[l] - (at + 1)) & 0xFF;
+  const fill = asm;
+  const fillAt = put(Uint8Array.from(fill));
+  { const c = S.fillCall; if (mk3Rom[c] !== 0x22 || mk3Rom[c + 1] !== lo(S.filler)) throw new Error("unexpected code at select fill");
+    rom[c + 1] = lo(fillAt); rom[c + 2] = hi(fillAt); rom[c + 3] = T; [1, 2, 3].forEach(k => mirror(c + k)); }
+
+  // fight name bar
+  { const N = M.names, strip = nameStrip(), stripAt = put(strip), dst = N.buffer + N.freeTile * 16;
+    const nw = [0x22, lo(S.unpacker), hi(S.unpacker), S.unpacker >> 16,                 // jsl unpack (as before)
+      0xC2, 0x30, 0x8B, 0xDA, 0x5A,                                                     // rep #$30 / phb / phx / phy
+      0xA2, lo(stripAt), hi(stripAt), 0xA0, lo(dst), hi(dst), 0xA9, strip.length - 1, 0x00,
+      0x54, dst >> 16, T, 0x7A, 0xFA, 0xAB, 0x6B];                                     // mvn / ply / plx / plb / rtl
+    const nwAt = put(Uint8Array.from(nw)), c = N.unpackCall;
+    if (mk3Rom[c] !== 0x22 || mk3Rom[c + 1] !== lo(S.unpacker)) throw new Error("unexpected code at name unpack");
+    rom[c + 1] = lo(nwAt); rom[c + 2] = hi(nwAt); rom[c + 3] = T; [1, 2, 3].forEach(k => mirror(c + k));
+    const e = N.table + N.entry * 3; rom[e] = N.freeTile; rom[e + 1] = 10; rom[e + 2] = 0; [0, 1, 2].forEach(k => mirror(e + k)); }
 
   // banana yellow for the ice ball
   for (let i = 1; i < 16; i++) { rom[M.iceBallPalette + i * 2] = dkcRom[D.bananaPalette + i * 2]; rom[M.iceBallPalette + i * 2 + 1] = dkcRom[D.bananaPalette + i * 2 + 1]; mirror(M.iceBallPalette + i * 2); mirror(M.iceBallPalette + i * 2 + 1); }
