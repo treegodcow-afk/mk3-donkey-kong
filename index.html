@@ -40,15 +40,16 @@
 <body>
 <main>
   <h1>Mortal Kombat 3, with Donkey Kong, Diddy Kong and Arthur</h1>
-  <p class="host-only">Load your own dump of <em>Mortal Kombat 3 (USA)</em> plus <em>Donkey Kong Country (USA) (Rev 1)</em> and/or <em>Super Ghouls 'N Ghosts (USA)</em>. The page draws the guest fighters from those cartridges into MK3: Donkey Kong takes Sub-Zero's slot and Diddy Kong takes Kung Lao's (from DKC), and Arthur takes Nightwolf's (from Super Ghouls 'N Ghosts), each with their own poses, specials, portrait, name and sound. Two players on one keyboard, or invite a friend online. The game files never leave your browser.</p>
+  <p class="host-only">Donkey Kong takes Sub-Zero's slot, Diddy Kong takes Kung Lao's and Arthur takes Nightwolf's, each with their own poses, specials, portrait, name and sound. Two players on one keyboard, or invite a friend online (they don't need any file).</p>
   <p class="guest-only">You're joining a friend's game as player 2. Their game streams to you here and your controls run player 2. Press Start (<kbd>Enter</kbd>) to join in.</p>
   <div class="drops host-only">
-    <div class="drop" id="dropMk3" tabindex="0"><b>Mortal Kombat 3 (USA)</b><br>or the finished guest-fighters game file<input type="file" id="fileMk3" accept=".sfc,.smc" hidden></div>
-    <div class="drop" id="dropDkc" tabindex="0"><b>Donkey Kong Country (USA) (Rev 1)</b><br>for Donkey Kong and Diddy<input type="file" id="fileDkc" accept=".sfc,.smc" hidden></div>
-    <div class="drop" id="dropSgng" tabindex="0"><b>Super Ghouls 'N Ghosts (USA)</b><br>for Arthur<input type="file" id="fileSgng" accept=".sfc,.smc" hidden></div>
+    <div class="drop" id="dropAny" tabindex="0"><b>Drop your game file here</b><br><em>Mortal Kombat 3 - Guest Fighters.sfc</em>, or click to pick it<br>
+      <span style="font-size:13px;color:var(--muted)">This browser remembers it, so it's only needed once. (Your own MK3, DKC and Super Ghouls 'N Ghosts files work too; drop them together.)</span>
+      <input type="file" id="fileAny" accept=".sfc,.smc" multiple hidden></div>
   </div>
+  <div hidden><div id="dropMk3"></div><div id="dropDkc"></div><div id="dropSgng"></div></div>
   <div class="select host-only" id="select">
-    <label><input type="checkbox" id="useDk" checked disabled> Add the guest fighters (from the games you added)</label><br>
+    <label hidden><input type="checkbox" id="useDk" checked></label>
     <a href="#" id="forgetRoms" hidden style="margin-right:12px;font-size:14px">Forget my game files</a><button id="startBtn">Start the game</button>
   </div>
   <div id="status"></div>
@@ -185,6 +186,7 @@ async function loadSaved() {
   else
   for (const [hash, fn] of [[GOOD_SHA1, setDkc], [SGNG_SHA1, setSgng], [MK3_SHA1, setMk3]]) { const rom = await romStore.get(hash); if (rom) { await fn(new Uint8Array(rom)); found++; } }
   if (found) {
+    document.getElementById("dropAny").classList.add("done");
     const forget = document.getElementById("forgetRoms"); forget.hidden = false;
     forget.onclick = async e => { e.preventDefault(); await romStore.clear(); location.reload(); };
   }
@@ -205,7 +207,7 @@ async function setMk3(file) {
     document.querySelectorAll("#dropDkc, #dropSgng").forEach(d => d.style.display = "none");
     document.getElementById("useDk").parentElement.style.display = "none";
     document.getElementById("select").style.display = "block";
-    say("Finished game file loaded: DK, Diddy and Arthur are already in. Start when ready.", "ok");
+    summary();
     return;
   }
   if (hash !== MK3_SHA1) { say("That file doesn't match the Mortal Kombat 3 (USA) dump this mod expects (SHA-1 " + hash.slice(0, 12) + "\u2026).", "bad"); return; }
@@ -213,7 +215,7 @@ async function setMk3(file) {
   romStore.put(hash, rom);
   document.getElementById("dropMk3").classList.add("done");
   document.getElementById("select").style.display = "block";
-  say(dkcRom || sgngRom ? "Games verified. Start when ready." : "Mortal Kombat 3 verified. Add Donkey Kong Country and/or Super Ghouls 'N Ghosts for the guest fighters, or start the plain game.", "ok");
+  summary();
 }
 async function setDkc(file) {
   const { rom, hash } = await readRom(file);
@@ -222,7 +224,7 @@ async function setDkc(file) {
   romStore.put(hash, rom);
   document.getElementById("dropDkc").classList.add("done");
   document.getElementById("useDk").disabled = false;
-  say(mk3Rom ? "Games verified. Start when ready." : "Donkey Kong Country verified. Now add Mortal Kombat 3.", "ok");
+  summary();
 }
 async function setSgng(file) {
   const { rom, hash } = await readRom(file);
@@ -231,7 +233,24 @@ async function setSgng(file) {
   romStore.put(hash, rom);
   document.getElementById("dropSgng").classList.add("done");
   document.getElementById("useDk").disabled = false;
-  say(mk3Rom ? "Games verified. Start when ready." : "Super Ghouls 'N Ghosts verified. Now add Mortal Kombat 3.", "ok");
+  summary();
+}
+function summary() {
+  if (builtRom) return say("Game file ready: Donkey Kong, Diddy Kong and Arthur are in. Press Start the game.", "ok");
+  if (!mk3Rom) return say((dkcRom || sgngRom) ? "Got it. Now add Mortal Kombat 3 (USA) as well, or just use the finished game file." : "", "ok");
+  const missing = [!dkcRom && "DK and Diddy need Donkey Kong Country", !sgngRom && "Arthur needs Super Ghouls 'N Ghosts"].filter(Boolean);
+  say("Ready. " + (missing.length ? missing.join("; ") + " (or drop the finished game file instead). " : "All three guest fighters are in. ") + "Press Start the game.", "ok");
+}
+// Any dropped file goes where it belongs: the finished game, or one of the three cartridges.
+async function addFiles(files) {
+  for (const f of files) {
+    const { rom, hash } = await readRom(f);
+    if (isBuilt(rom) || hash === MK3_SHA1) await setMk3(rom);
+    else if (hash === GOOD_SHA1) await setDkc(rom);
+    else if (hash === SGNG_SHA1) await setSgng(rom);
+    else { say("\"" + f.name + "\" isn't a file this page knows. Use Mortal Kombat 3 - Guest Fighters.sfc from your Desktop.", "bad"); continue; }
+    document.getElementById("dropAny").classList.add("done");
+  }
 }
 async function start() {
   if (engine || !(mk3Rom || builtRom)) return;
@@ -309,20 +328,15 @@ function startGuest() {
 if (JOIN_ID) {
   startGuest();
 } else {
-  const wire = (dropId, inputId, fn) => {
-    const drop = document.getElementById(dropId), input = document.getElementById(inputId);
-    drop.onclick = () => input.click();
-    input.onchange = () => input.files[0] && fn(input.files[0]);
-    drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
-    drop.ondragleave = () => drop.classList.remove("over");
-    drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); e.dataTransfer.files[0] && fn(e.dataTransfer.files[0]); };
-  };
-  wire("dropMk3", "fileMk3", setMk3);
-  wire("dropDkc", "fileDkc", setDkc);
-  wire("dropSgng", "fileSgng", setSgng);
+  const drop = document.getElementById("dropAny"), input = document.getElementById("fileAny");
+  drop.onclick = () => input.click();
+  input.onchange = () => addFiles([...input.files]);
+  drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = () => drop.classList.remove("over");
+  drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); addFiles([...e.dataTransfer.files]); };
   document.getElementById("startBtn").onclick = start;
   loadSaved();
-  Object.assign(window, { setDkc, setSgng, setMk3, start });   // for automated testing
+  Object.assign(window, { setDkc, setSgng, setMk3, addFiles, start });   // for automated testing
 }
 </script>
 </body>
