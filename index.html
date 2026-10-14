@@ -76,6 +76,8 @@
     <tr><td>Start (join)</td><td><kbd>Enter</kbd></td></tr>
   </table>
   <p>Gamepads work too: on the host the first one is player 1 and the second is player 2; a joining friend's first gamepad is player 2.</p>
+  <p class="host-only">One-key specials for player 1 (facing right; hold <kbd>Shift</kbd> when facing left):
+    <kbd>3</kbd> Arthur's lance throw, <kbd>4</kbd> up-throw, <kbd>5</kbd> lance charge, <kbd>6</kbd> launcher (any guest: DK's slam, Diddy's cartwheel, Arthur's magic), <kbd>7</kbd> Arthur's magic guard.</p>
 </main>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script type="module">
@@ -324,6 +326,38 @@ function startGuest() {
   peer.on("error", err => net("Couldn't connect (" + err.type + "). Ask your friend for a fresh link.", "bad"));
   video.onclick = () => { video.muted = false; video.play(); };
 }
+
+// One-key specials for testing: each plays a move's button sequence as player-1 key presses
+// (frames at 60 per second). "F"/"B" are toward/away from a player facing right; Shift mirrors them.
+const P1 = { up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight", LP: "KeyX", HP: "KeyZ", HK: "KeyA", LK: "KeyS" };
+const MACROS = {
+  Digit3: [["D", 3], ["D B", 3], ["B", 3], ["LP", 4]],                          // lance throw (down, back + LP)
+  Digit4: [["D", 3], ["D F", 3], ["F", 3], ["HP", 4]],                          // up-throw (down, forward + HP)
+  Digit5: [["F", 2], ["", 2], ["F", 2], ["F LK", 3]],                           // lance charge (forward, forward + LK)
+  Digit6: [["D", 5], ["", 7], ["D", 8], ["D HP", 4], ["D", 10]],               // launcher (down, down + HP)
+  Digit7: [["B", 2], ["", 2], ["B", 2], ["", 2], ["B", 2], ["HK", 3]],          // magic guard (back x3 + HK)
+};
+let macroBusy = false;
+async function playMacro(steps, flip) {
+  macroBusy = true;
+  const code = t => P1[t === "F" ? (flip ? "left" : "right") : t === "B" ? (flip ? "right" : "left") : t === "D" ? "down" : t];
+  let held = [];
+  for (const [keys, frames] of steps) {
+    const now = keys.split(" ").filter(Boolean).map(code);
+    for (const c of held) if (!now.includes(c)) window.dispatchEvent(new KeyboardEvent("keyup", { code: c }));
+    for (const c of now) if (!held.includes(c)) window.dispatchEvent(new KeyboardEvent("keydown", { code: c }));
+    held = now;
+    await new Promise(r => setTimeout(r, frames * 1000 / 60));
+  }
+  for (const c of held) window.dispatchEvent(new KeyboardEvent("keyup", { code: c }));
+  macroBusy = false;
+}
+window.addEventListener("keydown", e => {
+  const m = MACROS[e.code]; if (!m) return;
+  e.stopImmediatePropagation(); e.preventDefault();
+  if (!e.repeat && !macroBusy && engine) playMacro(m, e.shiftKey);
+}, true);
+window.addEventListener("keyup", e => { if (MACROS[e.code]) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
 
 if (JOIN_ID) {
   startGuest();

@@ -90,9 +90,25 @@ export function poseImage(p) {
 }
 
 // A pose for another game's builder: indexed image with the feet at (fx, fy) = origin column, bottom row.
-//   id: [frame, map] (steel armour), [frame, map, table], or { tiles: fileOffset, w: tilesAcross, h: tilesDown }
+//   id: [frame, map] (steel armour), [frame, map, table],
+//       { tiles: fileOffset, w: tilesAcross, h: tilesDown, rotate } (a block of tiles; rotate = turned to point up),
+//       or { base: id, add: id, dx, dy } (two poses combined, add's top-left at dx/dy from base's feet)
 let cache = null;
 export function sgngPose(rom, id) {
+  if (id.base) {
+    const b = sgngPose(rom, id.base), a = sgngPose(rom, id.add);
+    const ax = b.fx + id.dx, ay = b.fy + id.dy;
+    const x0 = Math.min(0, ax), y0 = Math.min(0, ay), x1 = Math.max(b.w, ax + a.w), y1 = Math.max(b.h, ay + a.h);
+    const w = x1 - x0, h = y1 - y0, data = new Uint8Array(w * h);
+    for (let y = 0; y < a.h; y++) for (let x = 0; x < a.w; x++) { const v = a.data[y * a.w + x]; if (v) data[(ay - y0 + y) * w + ax - x0 + x] = v; }
+    for (let y = 0; y < b.h; y++) for (let x = 0; x < b.w; x++) { const v = b.data[y * b.w + x]; if (v) data[(y - y0) * w + x - x0] = v; }
+    return { w, h, data, fx: b.fx - x0, fy: b.fy - y0 };
+  }
+  if (!Array.isArray(id) && id.rotate) {   // turned a quarter left: what pointed right points up
+    const r = sgngPose(rom, { ...id, rotate: false }), data = new Uint8Array(r.w * r.h);
+    for (let y = 0; y < r.h; y++) for (let x = 0; x < r.w; x++) data[(r.w - 1 - x) * r.h + y] = r.data[y * r.w + x];
+    return { w: r.h, h: r.w, data, fx: r.h / 2, fy: r.w };
+  }
   if (!Array.isArray(id)) {   // raw 4bpp tiles laid out in a row-major block (e.g. the lance)
     const w = id.w * 8, h = id.h * 8, data = new Uint8Array(w * h);
     for (let ty = 0; ty < id.h; ty++) for (let tx = 0; tx < id.w; tx++) { const t = id.tiles + (ty * id.w + tx) * 32;

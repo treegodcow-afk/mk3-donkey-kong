@@ -122,11 +122,11 @@ export const KONGS = {
     // Nightwolf's own records (the combo records at $E2xx are shared with Sub-Zero and left to DK)
     attacks: [[0xDE06, 52], [0xDEAF, 60], [0xDE13, 47], [0xDDEC, 89], [0xDEA2, 74], [0xDDF9, 71], [0xDE54, 42],
               [0xDE2D, 34], [0xDE3A, 45], [0xDE47, 37], [0xDE95, 78], [0xDE20, 85], [0xDE61, 101], [0xDE6E, 92],
-              [0xDE7B, 100], [0xDE88, 101]],
+              [0xDE7B, 100], [0xDE88, 101], [0xDEE3, 150]],
     palette: 0x3FDA27, kongPalette: 0x00344F,      // Nightwolf's palette / Arthur's steel armour
     portraitPose: [0x00, 0x26B6], portraitTile: 0xEB,
     namesEntry: 3, freeTile: 140,
-    voice: 0x102070, yell: { offset: 0x0357AD, rate: 40250, loopTo: 0, seconds: 0.6 },   // the armour-break crash
+    voice: 0x1011D6, yell: { offset: 0x0357AD, rate: 40250, loopTo: 0, seconds: 0.6 },   // the armour-break crash
     bannerFrame: 15,                                // "NIGHTWOLF WINS"
     scale: 2.8, ground: 46, feetX: 6,
     effectsFrom: 193,
@@ -134,14 +134,17 @@ export const KONGS = {
             [33, 37, "crouchAtk"], [38, 42, "upper"], [43, 45, "crouchAtk"], [46, 66, "punch"], [67, 81, "kick"],
             [82, 88, "crouchAtk"], [89, 89, "kick"], [90, 90, "crouch"], [91, 91, "jump"], [92, 92, "kick"],
             [93, 99, "flip"], [100, 101, "kick"], [102, 120, "hurt"], [121, 130, "down"], [131, 132, "crouch"],
-            [133, 141, "hurt"], [142, 142, "crouch"], [143, 146, "hurt"], [147, 151, "upper"], [152, 153, "stand"],
-            [154, 161, "throw"], [162, 168, "hurt"], [169, 169, "stand"], [170, 170, "hurt"], [171, 176, "upper"],
+            [133, 141, "hurt"], [142, 142, "crouch"], [143, 146, "hurt"], [147, 151, "throwUp"], [152, 153, "magic"],
+            [154, 161, "throw"], [162, 167, "hurt"], [168, 169, "charge"], [170, 170, "hurt"], [171, 176, "upper"],
             [177, 180, "hurt"], [181, 181, "down"], [182, 186, "win"], [187, 192, "throw"]],
     // the arrow in flight becomes the lance; the bow that appears in his hand is dropped
     projectile: { list: [211, 212, 213, 214], pose: "lance", scale: 3, budget: 0x600, slot: 0x3FDAA7, slotFrom: 0x021D66 },
-    blank: [199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210],
+    // the hatchet's swing becomes a lance thrown straight up (Arthur's up-throw); same palette slot
+    effects: [{ list: [217, 218, 219, 220, 221, 222], pose: "lanceUp", scale: 3 }],
+    // the bow in his hand and the shadow copies around the reflect are dropped
+    blank: [199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 223, 224, 225, 226],
     anims: [[186, "win", "placed"]],
-    special: { frames: [38, 42], pose: "magic" },   // down, down + high punch: magic launcher
+    special: { frames: [38, 42], pose: "magic" },   // down, down + high punch: magic launcher (custom)
     poses: {
       stand:  [[0x00, 0x26B6]],
       walk:   [[0x01, 0x2300], [0x02, 0x236C], [0x03, 0x23F0], [0x04, 0x2464], [0x05, 0x24C8], [0x06, 0x253C]],
@@ -159,6 +162,11 @@ export const KONGS = {
       down:   [[0x1B, 0x2AC2]],                   // armour knocked off
       win:    [[0x12, 0x2F8C]],
       lance:  [{ tiles: 0x07BF00, w: 4, h: 1 }],
+      lanceUp: [{ tiles: 0x07BF00, w: 4, h: 1, rotate: true }],
+      // custom: up-throw (arm raised with the lance over his head) and the lance charge (running, lance levelled)
+      throwUp: [[0x19, 0x3190], { base: [0x1A, 0x31FC], add: { tiles: 0x07BF00, w: 4, h: 1, rotate: true }, dx: -13, dy: -58 }],
+      charge: [{ base: [0x02, 0x236C], add: { tiles: 0x07BF00, w: 4, h: 1 }, dx: -6, dy: -20 },
+               { base: [0x04, 0x2464], add: { tiles: 0x07BF00, w: 4, h: 1 }, dx: -6, dy: -20 }],
     },
   },
 };
@@ -179,7 +187,7 @@ export const MK3 = {
   // $80:FF0A); a table at $80:FF0F gives each name's (first tile, tiles, padding).
   names: { unpackCall: 0x00FF0A, buffer: 0x7F5300, table: 0x00FF0F },
   // Announcer clips stream from ROM (3-byte prefix, then BRR blocks at about 6 kHz)
-  voice: { prefix: 3, blocks: 341, rate: 6000 },
+  voice: { prefix: 3, rate: 6000, table: [0x150F00, 0x151400] },
   // "<NAME> WINS" banners are frames of graphics set 38
   bannerSet: 38,
   // Attack boxes: 13-byte records in bank $83 (reach, top, width, height as words in game units of
@@ -403,7 +411,8 @@ export function kongVoice(mk3, dkc, yell, V) {
   const n = Math.floor(src.length * V.rate / yell.rate), pcm = [];
   for (let i = 0; i < n; i++) { const t = i * yell.rate / V.rate, k = Math.floor(t), f = t - k;   // linear interpolation
     pcm.push(Math.round(((src[k] || 0) * (1 - f) + (src[k + 1] || 0) * f) * gain)); }
-  for (let i = 0; i < 32; i++) pcm.push(0);   // a short tail of silence
+  // silence to the end: the game streams the clip's whole length, so nothing of the old one may remain
+  while (pcm.length < V.blocks * 16) pcm.push(0);
   const brr = brrEncode(pcm.slice(0, V.blocks * 16));
   return brr;
 }
@@ -512,8 +521,9 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
     // poses: every pose at the Kong's size, shrunk only if that one pose would not fit its VRAM budget
     const kongPal = paletteAt(A.rom, K.kongPalette), poses = {};
     for (const [cat, ids] of Object.entries(K.poses)) {
-      const budget = K.projectile && cat === K.projectile.pose ? K.projectile.budget : MK3.bodyBudget;
-      const start = K.projectile && cat === K.projectile.pose ? K.projectile.scale : K.scale;
+      const fx = [K.projectile, ...(K.effects || [])].find(e => e && e.pose === cat);
+      const budget = fx ? fx.budget || 0x600 : MK3.bodyBudget;
+      const start = fx ? fx.scale : K.scale;
       poses[cat] = ids.map(id => {
         let img = A.pose(id);
         if (K.artPalette && K.artPalette[cat]) img = recolour(img, paletteAt(A.rom, A.at(K.artPalette[cat])), kongPal);
@@ -549,7 +559,9 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
     if (slot) bank++;
 
     // a frame stream per frame number; every group of 64 shares a bank
-    const P = K.projectile, isProjectile = n => P && (P.list ? P.list.includes(n) : n >= P.frames[0] && n <= P.frames[1]);
+    // projectile and effect frames: drawn centred where the original was (not a body, no hit box)
+    const P = K.projectile, isIn = (e, n) => e && (e.list ? e.list.includes(n) : n >= e.frames[0] && n <= e.frames[1]);
+    const fxOf = n => isIn(P, n) ? P : (K.effects || []).find(e => isIn(e, n));
     const addrs = new Uint16Array(count), banks = [], counters = {}, placed = {}, boxes = {};
     let replaced = 0, kept = 0;
     for (let g = 0; g * 64 < count; g++, bank++) {
@@ -558,8 +570,8 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
         const n = i + 1, orig = frameAddr(i);
         let b = null;
         try { const f = buildFrame(mk3Rom, recipe, orig), c = compose(f); b = { ...c, tiles: f.n16 * 4 + f.n8 }; } catch { b = null; }
-        const proj = b && isProjectile(n);
-        let cat = proj ? P.pose : b && n < K.effectsFrom && category(b, K.ground);
+        const fxN = b && fxOf(n), proj = !!fxN;
+        let cat = proj ? fxN.pose : b && n < K.effectsFrom && category(b, K.ground);
         const mv = cat && !proj && K.moves.find(([a, z]) => n >= a && n <= z);
         if (mv) cat = mv[2] === "hurt" && cat === "down" ? "down" : mv[2];
         if (cat && !poseWords[cat]) cat = poseWords.attack && cat === "lunge" ? "attack" : "stand";
@@ -572,7 +584,7 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
           let feetX = grounded ? K.feetX : Math.round(b.ox + b.w / 2), feetY = Math.min(K.ground, b.oy + b.h);
           if (proj) {   // centred on the projectile (at its leading end for long trails)
             const top = Math.min(...pose.map(c => c.y));
-            feetX = P.lead ? b.ox + b.w - 24 : Math.round(b.ox + b.w / 2); feetY = Math.round(b.oy + b.h / 2 - top / 2);
+            feetX = fxN.lead ? b.ox + b.w - 24 : Math.round(b.ox + b.w / 2); feetY = Math.round(b.oy + b.h / 2 - top / 2);
           }
           placed[n] = { feetX, feetY };
           if (!proj) boxes[n] = [feetX + pb.x0, feetX + pb.x1 + 1, feetY + pb.y0, feetY + pb.y1 + 1];
@@ -662,7 +674,7 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
     // animation start: uppercut of a Kong's object, Down tapped twice just before -> flag = move number
     const an = [], al = {}, af = [];
     const abr = (op, l) => { an.push(op, 0); af.push([an.length - 1, l]); };
-    an.push(0x08, 0xC2, 0x30, 0x48, 0xDA, 0xC9, SP.uppercutAnim, 0x00); abr(0xD0, "done");
+    an.push(0x08, 0xC2, 0x30, 0x48, 0xDA, 0x8F, 0xD0, 0xFF, 0x7E, 0xC9, SP.uppercutAnim, 0x00); abr(0xD0, "done");   // (last anim id kept at $7EFFD0 for testing)
     an.push(0xA5, 0x2A, 0xC9, 0x04, 0x00); abr(0xB0, "done"); an.push(0xAA);   // fighters only (objects 0 and 2)
     an.push(0xA9, 0x00, 0x00, 0x9F, ...L(FLAG));
     an.push(0xAF, ...L(cnt), 0x38, 0xFF, ...L(DD), 0xC9, SP.window, 0x00); abr(0xB0, "done");
@@ -707,7 +719,15 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
   }
 
   // ---- announcer clips ----
-  for (const k of which) { const K = kongs[k], V = { ...MK3.voice, offset: K.voice + MK3.voice.prefix }; rom.set(kongVoice(mk3Rom, artSource(K, roms).rom, K.yell, V), V.offset); }
+  // (each clip's length comes from its record in the clip table: length word, then the 24-bit pointer)
+  for (const k of which) {
+    const K = kongs[k], ptr = K.voice + 0xC00000, T2 = MK3.voice.table;
+    let at = -1; for (let o = T2[0]; o < T2[1]; o++) if (mk3Rom[o] === (ptr & 0xFF) && mk3Rom[o + 1] === ((ptr >> 8) & 0xFF) && mk3Rom[o + 2] === ptr >> 16) { at = o; break; }
+    if (at < 0) throw new Error(K.name + ": voice clip not in the clip table");
+    const len = mk3Rom[at - 2] | (mk3Rom[at - 1] << 8);
+    const V = { ...MK3.voice, offset: K.voice + MK3.voice.prefix, blocks: Math.floor((len - MK3.voice.prefix) / 9) };
+    rom.set(kongVoice(mk3Rom, artSource(K, roms).rom, K.yell, V), V.offset);
+  }
 
   // ---- "<NAME> WINS" banners: frames of set 38 repainted, set 38's descriptor copied ----
   {
