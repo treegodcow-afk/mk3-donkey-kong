@@ -58,6 +58,12 @@
     <input id="inviteLink" readonly placeholder="Invite link appears here" hidden>
   </div>
   <div id="netStatus"></div>
+  <details class="host-only" id="relayBox" style="margin:8px 0;font-size:14px"><summary>Relay server (only if a friend can't connect)</summary>
+    <p style="margin:6px 0">Paste the TURN details from your relay provider. They're kept in this browser only and go out inside your invite links.</p>
+    <input id="turnUrls" placeholder="turn:… (several separated by spaces)" style="width:100%;margin:2px 0">
+    <input id="turnUser" placeholder="username" style="width:49%"> <input id="turnPass" placeholder="credential" style="width:49%">
+    <button id="turnSave" style="margin-top:4px">Save relay</button> <span id="turnMsg"></span>
+  </details>
   <canvas id="screen"></canvas>
   <video id="remote" autoplay playsinline></video>
   <table class="host-only">
@@ -145,22 +151,46 @@ function applyRemote(bits) {
 }
 
 let peer = null;
+// Connection setup. A direct connection needs both networks to allow it (STUN finds the public
+// address); when one side is behind a strict network (phone hotspots, some ISPs) the video has to go
+// through a relay (TURN) server. A relay can be set once on the host ("Relay server" below the invite
+// button, kept in this browser); invite links then carry it to the guest.
+function relayFromLink() { try { const t = params.get("turn"); return t ? JSON.parse(atob(t)) : null; } catch { return null; } }
+function savedRelay() { try { return JSON.parse(localStorage.getItem("turn") || "null"); } catch { return null; } }
+function peerOptions(relay) {
+  const iceServers = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }, { urls: "stun:stun.cloudflare.com:3478" }];
+  if (relay && relay.urls) iceServers.push(relay);
+  return { config: { iceServers } };
+}
+// Report how the WebRTC connection under a PeerJS connection is doing.
+function watchIce(pc, who) {
+  if (!pc) return;
+  pc.addEventListener("iceconnectionstatechange", () => {
+    const st = pc.iceConnectionState;
+    if (st === "failed") net("Couldn't link up with " + who + ": one of your networks blocks direct connections. Set a relay server (see \"Relay server\") and send a new invite link.", "bad");
+    else if (st === "disconnected") net("Connection to " + who + " dropped. It may come back by itself.", "bad");
+  });
+}
 document.getElementById("invite").onclick = () => {
   if (peer) return;
   net("Creating an invite link…");
-  peer = new Peer();
+  const relay = savedRelay();
+  peer = new Peer(peerOptions(relay));
   peer.on("open", id => {
     const link = document.getElementById("inviteLink");
-    link.value = location.origin + location.pathname + "?join=" + encodeURIComponent(id);
+    link.value = location.origin + location.pathname + "?join=" + encodeURIComponent(id) + (relay ? "&turn=" + encodeURIComponent(btoa(JSON.stringify(relay))) : "");
     link.hidden = false;
     link.select();
     net("Send this link to a friend. They don't need the game file.", "ok");
   });
   peer.on("connection", conn => {
+    net("A friend is connecting…");
+    watchIce(conn.peerConnection, "your friend");
     conn.on("open", () => {
       const stream = canvas.captureStream(60);
       if (window.__gameAudio) window.__gameAudio.stream.getAudioTracks().forEach(t => stream.addTrack(t));
-      peer.call(conn.peer, stream);
+      const call = peer.call(conn.peer, stream);
+      if (call) watchIce(call.peerConnection, "your friend");
       net("Friend connected. They're player 2: they press Start to join in.", "ok");
     });
     conn.on("data", d => { if (d && typeof d.b === "number") applyRemote(d.b); });
@@ -313,17 +343,21 @@ function startGuest() {
     }
     requestAnimationFrame(pollPad);
   })();
-  peer = new Peer();
+  peer = new Peer(peerOptions(relayFromLink()));
+  let linked = false;
+  setTimeout(() => { if (!linked) net("Still can't reach your friend's game. If it stays like this, one of your networks blocks direct connections: they need to set a relay server and send a new link.", "bad"); }, 20000);
   peer.on("open", () => {
-    conn = peer.connect(JOIN_ID);
-    conn.on("open", () => net("Connected. Click the game if there's no sound.", "ok"));
+    conn = peer.connect(JOIN_ID, { reliable: true });
+    watchIce(conn.peerConnection, "the host");
+    conn.on("open", () => { linked = true; net("Connected. Click the game if there's no sound.", "ok"); });
     conn.on("close", () => net("The host closed the game.", "bad"));
   });
   peer.on("call", call => {
     call.answer();
+    watchIce(call.peerConnection, "the host");
     call.on("stream", s => { video.srcObject = s; video.play().catch(() => {}); });
   });
-  peer.on("error", err => net("Couldn't connect (" + err.type + "). Ask your friend for a fresh link.", "bad"));
+  peer.on("error", err => net(err.type === "peer-unavailable" ? "That game isn't open any more. Ask your friend to click \"Invite a friend online\" again and send the new link." : "Couldn't connect (" + err.type + "). Ask your friend for a fresh link.", "bad"));
   video.onclick = () => { video.muted = false; video.play(); };
 }
 
@@ -369,6 +403,13 @@ if (JOIN_ID) {
   drop.ondragleave = () => drop.classList.remove("over");
   drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); addFiles([...e.dataTransfer.files]); };
   document.getElementById("startBtn").onclick = start;
+  { const r = savedRelay(); if (r) { document.getElementById("turnUrls").value = [].concat(r.urls).join(" "); document.getElementById("turnUser").value = r.username || ""; document.getElementById("turnPass").value = r.credential || ""; document.getElementById("turnMsg").textContent = "Relay saved."; } }
+  document.getElementById("turnSave").onclick = () => {
+    const urls = document.getElementById("turnUrls").value.trim().split(/\s+/).filter(Boolean);
+    const relay = urls.length ? { urls, username: document.getElementById("turnUser").value.trim(), credential: document.getElementById("turnPass").value.trim() } : null;
+    try { relay ? localStorage.setItem("turn", JSON.stringify(relay)) : localStorage.removeItem("turn"); } catch {}
+    document.getElementById("turnMsg").textContent = relay ? "Relay saved. Make a new invite link (reload the page first if you already made one)." : "Relay removed.";
+  };
   loadSaved();
   Object.assign(window, { setDkc, setSgng, setMk3, addFiles, start });   // for automated testing
 }
