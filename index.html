@@ -48,7 +48,7 @@
   </div>
   <div class="select host-only" id="select">
     <label><input type="checkbox" id="useDk" checked disabled> Donkey Kong replaces Sub-Zero (needs the DKC file)</label><br>
-    <button id="startBtn">Start the game</button>
+    <a href="#" id="forgetRoms" hidden style="margin-right:12px;font-size:14px">Forget my game files</a><button id="startBtn">Start the game</button>
   </div>
   <div id="status"></div>
   <div id="netplay">
@@ -166,7 +166,26 @@ document.getElementById("invite").onclick = () => {
 
 // ---- host setup: ROMs, build ----
 let dkcRom = null, mk3Rom = null;
+// Verified game files are kept in this browser (IndexedDB, keyed by SHA-1) so they don't have to be
+// dropped in again. They never leave the computer; "Forget my game files" removes them.
+const romStore = {
+  db: null,
+  async open() { if (this.db) return this.db; this.db = await new Promise((ok, no) => { const r = indexedDB.open("rom-cache", 1); r.onupgradeneeded = () => r.result.createObjectStore("roms"); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); }); return this.db; },
+  async run(mode, fn) { const db = await this.open(); return new Promise((ok, no) => { const t = db.transaction("roms", mode), q = fn(t.objectStore("roms")); t.oncomplete = () => ok(q && q.result); t.onerror = () => no(t.error); }); },
+  get(key) { return this.run("readonly", st => st.get(key)).catch(() => null); },
+  put(key, bytes) { return this.run("readwrite", st => st.put(bytes, key)).catch(() => {}); },
+  clear() { return this.run("readwrite", st => st.clear()).catch(() => {}); },
+};
+async function loadSaved() {
+  let found = 0;
+  for (const [hash, fn] of [[GOOD_SHA1, setDkc], [MK3_SHA1, setMk3]]) { const rom = await romStore.get(hash); if (rom) { await fn(new Uint8Array(rom)); found++; } }
+  if (found) {
+    const forget = document.getElementById("forgetRoms"); forget.hidden = false;
+    forget.onclick = async e => { e.preventDefault(); await romStore.clear(); location.reload(); };
+  }
+}
 async function readRom(file) {
+  if (file instanceof Uint8Array) return { rom: file, hash: await sha1Hex(file), saved: true };
   let rom = new Uint8Array(await file.arrayBuffer());
   if (rom.length % 1024 === 512) rom = rom.slice(512);   // drop a copier header
   return { rom, hash: await sha1Hex(rom) };
@@ -175,6 +194,7 @@ async function setMk3(file) {
   const { rom, hash } = await readRom(file);
   if (hash !== MK3_SHA1) { say("That file doesn't match the Mortal Kombat 3 (USA) dump this mod expects (SHA-1 " + hash.slice(0, 12) + "\u2026).", "bad"); return; }
   mk3Rom = rom;
+  romStore.put(hash, rom);
   document.getElementById("dropMk3").classList.add("done");
   document.getElementById("select").style.display = "block";
   say(dkcRom ? "Both games verified. Start when ready." : "Mortal Kombat 3 verified. Add Donkey Kong Country for DK, or start the plain game.", "ok");
@@ -183,6 +203,7 @@ async function setDkc(file) {
   const { rom, hash } = await readRom(file);
   if (hash !== GOOD_SHA1) { say("That file doesn't match the Donkey Kong Country (USA) (Rev 1) dump (SHA-1 " + hash.slice(0, 12) + "\u2026).", "bad"); return; }
   dkcRom = rom;
+  romStore.put(hash, rom);
   document.getElementById("dropDkc").classList.add("done");
   document.getElementById("useDk").disabled = false;
   say(mk3Rom ? "Both games verified. Start when ready." : "Donkey Kong Country verified. Now add Mortal Kombat 3.", "ok");
@@ -267,6 +288,7 @@ if (JOIN_ID) {
   wire("dropMk3", "fileMk3", setMk3);
   wire("dropDkc", "fileDkc", setDkc);
   document.getElementById("startBtn").onclick = start;
+  loadSaved();
   Object.assign(window, { setDkc, setMk3, start });   // for automated testing
 }
 </script>
