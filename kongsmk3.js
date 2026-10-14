@@ -125,6 +125,7 @@ export const KONGS = {
               [0xDE7B, 100], [0xDE88, 101], [0xDEE3, 150]],
     palette: 0x3FDA27, kongPalette: 0x00344F,      // Nightwolf's palette / Arthur's steel armour
     portraitPose: [0x00, 0x26B6], portraitTile: 0xEB,
+    vsPose: [0x0A, 0x291E],                         // lance drawn back, ready to throw
     namesEntry: 3, freeTile: 140,
     voice: 0x1011D6, yell: { offset: 0x0357AD, rate: 40250, loopTo: 0, seconds: 0.6 },   // the armour-break crash
     bannerFrame: 15,                                // "NIGHTWOLF WINS"
@@ -196,6 +197,12 @@ export const MK3 = {
   // mirror of bank $3D) and the one routine that sets the bank ($83:D221) points there, so the Kongs'
   // records can be rewritten without touching anyone else's.
   attackData: { bankByte: 0x03D222, copyFrom: 0x03C000, length: 0x4000, newBank: 0x7D, unit: 25 / 16, yBase: 60 },
+  // "Battle" screen pictures: per fighter (names entry) a bank ($80:F414), packed 6bpp tiles ($80:F432), packed
+  // 32x32 tile map ($80:F450), raw 64-colour palette ($80:F46E) and tile count ($80:F3F6). Each is unpacked by
+  // $86:E41A from three call sites; those go through a wrapper that copies data stored unpacked (in banks below
+  // $80, i.e. ours) and hands everything else to the unpacker. The picture fills at most 16 x 22 tiles.
+  vs: { bank: 0x00F414, tiles: 0x00F432, map: 0x00F450, pal: 0x00F46E, count: 0x00F3F6,
+        calls: [0x00EBF5, 0x00EC1F, 0x00ECC3], unpacker: 0x86E41A, cols: 16, rows: 22 },
   // New moves: down, down + high punch runs the fighter's uppercut with the Kong's own frames
   special: { padCall: 0x00888E, pads: 0x878000, newPress: 0x7E35D4, animStart: 0x06BCF7, animInit: 0x86DC30,
              uppercutAnim: 0x0B, window: 30, ram: 0x7EFFC0 },
@@ -808,6 +815,50 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
       // a longer reach stretches the box forward and keeps its near edge, so close hits still land
       put16(0, nx); put16(1, ny); put16(2, Math.max(wd, wd + nx - x)); put16(3, nh);
       (stats.attacks = stats.attacks || []).push(`${K.name.split(" ")[0]} ${rec.toString(16)}@${frame}: reach ${x}->${nx} top ${y}->${ny} h ${ht}->${nh}`);
+    }
+  }
+
+  // ---- "Battle" screen pictures ----
+  {
+    const V = MK3.vs, w16 = o => mk3Rom[o] | (mk3Rom[o + 1] << 8), set16 = (o, v) => { rom[o] = lo(v); rom[o + 1] = hi(v); mirror(o); mirror(o + 1); };
+    // wrapper: data in a bank below $80 is ours and stored unpacked (length word, then the bytes)
+    const wrap = [0x08, 0xC2, 0x30, 0xA5, 0x7C, 0x29, 0xFF, 0x00, 0xC9, 0x80, 0x00, 0x90, 0x05,
+      0x28, 0x5C, ...L(V.unpacker),
+      0xA0, 0x00, 0x00, 0xB7, 0x7A, 0x85, 0x8E, 0xA5, 0x7A, 0x18, 0x69, 0x02, 0x00, 0x85, 0x7A,
+      0xB7, 0x7A, 0x97, 0x76, 0xC8, 0xC8, 0xC4, 0x8E, 0x90, 0xF6, 0xA5, 0x8E, 0x28, 0x6B];
+    const wrapAt = put(Uint8Array.from(wrap));
+    for (const site of V.calls) patchCall(site, V.unpacker, wrapAt);
+    for (const k of which) {
+      const K = kongs[k], A = artSource(K, roms), id = K.namesEntry, count = w16(V.count + id * 2);
+      const pal = paletteAt(A.rom, K.kongPalette), img0 = A.pose(K.vsPose || K.portraitPose);
+      // largest size that fits the area and the fighter's tile budget
+      let cellsOut = null;
+      for (let sc = 8; sc > 0.5; sc -= 0.1) {
+        const img = scaled(img0, sc); if (img.w > V.cols * 8 || img.h > V.rows * 8) continue;
+        const ox = Math.floor((V.cols * 8 - img.w) / 2), oy = V.rows * 8 - img.h, cells = [];
+        for (let cy = 0; cy < V.rows; cy++) for (let cx = 0; cx < V.cols; cx++) {
+          const px = new Uint8Array(64); let any = false;
+          for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) { const ix = cx * 8 + x - ox, iy = cy * 8 + y - oy;
+            if (ix >= 0 && iy >= 0 && ix < img.w && iy < img.h) { const v = img.data[iy * img.w + ix]; px[y * 8 + x] = v; if (v) any = true; } }
+          if (any) cells.push({ cx, cy, px });
+        }
+        if (cells.length < count) { cellsOut = cells; break; }
+      }
+      if (!cellsOut) throw new Error(K.name + ": battle picture does not fit");
+      // 6bpp tiles (48 bytes: plane pairs 0/1, 2/3, 4/5); tile 0 stays blank, one spare at the end
+      const tiles = new Uint8Array((count + 1) * 48), map = new Uint8Array(32 * 32 * 2);
+      cellsOut.forEach((c, i) => { const t = i + 1;
+        for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) { const v = c.px[y * 8 + x], m = 1 << (7 - x);
+          for (let pl = 0; pl < 6; pl++) if (v & (1 << pl)) tiles[t * 48 + (pl >> 1) * 16 + y * 2 + (pl & 1)] |= m; }
+        map[(c.cy * 32 + c.cx) * 2] = t & 0xFF; map[(c.cy * 32 + c.cx) * 2 + 1] = t >> 8; });
+      const palBytes = new Uint8Array(128);
+      for (let v = 1; v < 16; v++) { const [r, g, b] = pal[v], c = (r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10); palBytes[v * 2] = lo(c); palBytes[v * 2 + 1] = hi(c); }
+      const vb = bank++; let vp = 0;
+      const vput = (bytes, header) => { const a = vp, d = header ? Uint8Array.from([lo(bytes.length), hi(bytes.length), ...bytes]) : bytes; rom.set(d, exOff(vb, vp)); vp += d.length; return a; };
+      const palAt = vput(palBytes, false), mapAt = vput(map, true), tilesAt = vput(tiles, true);
+      if (vp > 0x8000) throw new Error("battle picture bank full");
+      set16(V.bank + id * 2, vb); set16(V.tiles + id * 2, tilesAt); set16(V.map + id * 2, mapAt); set16(V.pal + id * 2, palAt);
+      (stats.vs = stats.vs || []).push(`${K.name}: ${cellsOut.length}/${count} tiles`);
     }
   }
 
