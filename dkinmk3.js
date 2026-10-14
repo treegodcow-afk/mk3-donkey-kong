@@ -44,9 +44,10 @@ export const DK_RECIPE = {
     bananaHold: 217,               // the frame it holds while flying (animated as a spinning banana)
     poseScale: { banana: 3 },
     // the thrower and the ice ball share the fighter's VRAM area, so both stay smaller then
-    poseLimit: { throw: 16, banana: 12 },
+    // bytes of sprite VRAM a frame may use: the body gets $800 (the next $600 hold blood and
+    // projectiles, then the other objects), the ice ball / banana gets $600
+    vramBudget: { body: 0x800, banana: 0x600 },
     scale: 1.6, ground: 43, feetX: 6,          // feet position in frame coordinates (from the stance)
-    maxPieces: 24,                 // 16x16 pieces that fit the fighter's VRAM area
     // Sub-Zero frame numbers by move, recorded from play (the rest go by outline)
     moves: [[3, 9, "stand"], [10, 24, "walk"], [25, 25, "stand"], [26, 32, "crouch"], [33, 39, "upper"],
             [40, 44, "slap"], [45, 63, "punch"], [64, 65, "block"], [66, 76, "lunge"], [77, 83, "lunge"],
@@ -103,6 +104,28 @@ function cells(img) {
   return out;
 }
 
+// Split cells into sprite pieces: a mostly-full cell stays one 16x16 piece, a cell with only one or
+// two 8x8 quarters in use becomes 8x8 pieces (1 tile each instead of 4).
+function pieces(img) {
+  const big = [], small = [];
+  for (const c of cells(img)) {
+    const q = [[0, 0], [8, 0], [0, 8], [8, 8]].filter(([qx, qy]) => { for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) if (c.px[(qy + y) * 16 + qx + x]) return true; return false; });
+    if (q.length >= 3) big.push(c); else for (const [qx, qy] of q) small.push({ x: c.x + qx, y: c.y + qy, px: c.px, qx, qy });
+  }
+  return { big, small };
+}
+
+// How far into the fighter's VRAM area a frame with n16 big and n8 small pieces reaches, using the
+// game's own placement tables (16x16 steps at $85:A428; 8x8 start $85:A498[n16], steps via $85:A73A).
+export function vramEnd(mk3, n16, n8) {
+  const r16 = a => mk3[off(a)] | (mk3[off(a) + 1] << 8);
+  let end = 0, o = 0;
+  for (let k = 0; k < n16; k++) { end = Math.max(end, o + 0x240); o += r16(0x85A428 + k * 2); }
+  let p = r16(0x85A498 + n16 * 2); const list = 0x850000 | r16(0x85A73A + n16 * 2);
+  for (let k = 0; k < n8; k++) { end = Math.max(end, p + 0x20); p += r16(list + k * 2); }
+  return end;
+}
+
 function tileBytes(px, ox, oy) {                       // 8x8 of a 16x16 cell -> SNES 4bpp
   const t = new Uint8Array(32);
   for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
@@ -125,7 +148,7 @@ function category(b, ground) {
 
 // A frame stream: every piece 16x16, explicit x/y bytes, four tile words.
 function stream(pose, feetX, feetY) {
-  const s = [pose.length, pose.length];
+  const s = [pose.length, pose.filter(c => c.big).length];
   for (const c of pose) { s.push(0, (feetX + c.x) & 0xFF, (feetY + c.y) & 0xFF); for (const w of c.w) s.push(w & 0xFF, w >> 8); }
   return Uint8Array.from(s);
 }
@@ -165,8 +188,8 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
   // every pose at DK's size (M.scale), shrunk only if that one pose would not fit the VRAM budget
   const scale = M.scale, poses = {};
   for (const [cat, list] of Object.entries(base)) poses[cat] = list.map(p => {
-    const limit = M.poseLimit[cat] || M.maxPieces;
-    for (let s = M.poseScale[cat] || scale; ; s -= 0.05) { const c = cells(scaled(p, s)); if (c.length <= limit || s < 1) return c; }
+    const budget = M.vramBudget[cat] || M.vramBudget.body;
+    for (let s = M.poseScale[cat] || scale; ; s -= 0.05) { const pc = pieces(scaled(p, s)); if (vramEnd(mk3Rom, pc.big.length, pc.small.length) <= budget || s < 0.8) return pc; }
   });
 
   // tiles: deduplicated, 256 per table entry, entries after Sub-Zero's own
@@ -174,8 +197,10 @@ export function buildDkMk3(mk3Rom, dkcRom, recipe = DK_RECIPE) {
   const tileWord = t => { const k = t.join(","); let i = tileIndex.get(k); if (i === undefined) { i = tiles.length; tiles.push(t); tileIndex.set(k, i); }
     return (((i & 0xFF) << 8) | ((M.tileEntries + (i >> 8)) * 4)); };
   const poseWords = {};
-  for (const [cat, list] of Object.entries(poses)) poseWords[cat] = list.map(cs => cs.map(c => ({ x: c.x, y: c.y,
-    w: [tileWord(tileBytes(c.px, 0, 0)), tileWord(tileBytes(c.px, 8, 0)), tileWord(tileBytes(c.px, 0, 8)), tileWord(tileBytes(c.px, 8, 8))] })));
+  for (const [cat, list] of Object.entries(poses)) poseWords[cat] = list.map(pc => [
+    ...pc.big.map(c => ({ big: true, x: c.x, y: c.y,
+      w: [tileWord(tileBytes(c.px, 0, 0)), tileWord(tileBytes(c.px, 8, 0)), tileWord(tileBytes(c.px, 0, 8)), tileWord(tileBytes(c.px, 8, 8))] })),
+    ...pc.small.map(c => ({ big: false, x: c.x, y: c.y, w: [tileWord(tileBytes(c.px, c.qx, c.qy))] }))]);
   const entries = Math.ceil(tiles.length / 256);
   if (M.tileEntries + entries > 64) throw new Error("too many DK tiles");
 
