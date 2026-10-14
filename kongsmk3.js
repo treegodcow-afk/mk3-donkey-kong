@@ -11,6 +11,7 @@
 // portrait, name, announcer clip and win banner.
 import { buildFrame, compose } from "./mk3frames.js";
 import { hiromOffset, parseFrame } from "./dkcskin.js";
+import { sgngPose, SGNG } from "./sgngart.js";
 
 export const DKC = {
   frameTable: 0x3BCC9C,            // file offset; 4 bytes per frame id (addr16, bank, y)
@@ -112,6 +113,53 @@ export const KONGS = {
       barrel: [0x15C0, 0x15C4, 0x15C8, 0x15CC, 0x15D0, 0x15D4],
     },
     artPalette: { barrel: "barrelPalette" },       // poses drawn in another palette, recoloured
+  },
+  // Arthur from Super Ghouls 'N Ghosts, in Nightwolf's slot. Pose ids are [tile frame, map] pairs from
+  // the SGnG ROM (see sgngart.js); his arrow becomes Arthur's lance.
+  arthur: {
+    art: "sgng", name: "ARTHUR", setId: 6,          // Nightwolf's graphics set
+    fighterId: 3,
+    // Nightwolf's own records (the combo records at $E2xx are shared with Sub-Zero and left to DK)
+    attacks: [[0xDE06, 52], [0xDEAF, 60], [0xDE13, 47], [0xDDEC, 89], [0xDEA2, 74], [0xDDF9, 71], [0xDE54, 42],
+              [0xDE2D, 34], [0xDE3A, 45], [0xDE47, 37], [0xDE95, 78], [0xDE20, 85], [0xDE61, 101], [0xDE6E, 92],
+              [0xDE7B, 100], [0xDE88, 101]],
+    palette: 0x3FDA27, kongPalette: 0x00344F,      // Nightwolf's palette / Arthur's steel armour
+    portraitPose: [0x00, 0x26B6], portraitTile: 0xEB,
+    namesEntry: 3, freeTile: 140,
+    voice: 0x102070, yell: { offset: 0x0357AD, rate: 40250, loopTo: 0, seconds: 0.6 },   // the armour-break crash
+    bannerFrame: 15,                                // "NIGHTWOLF WINS"
+    scale: 2.8, ground: 46, feetX: 6,
+    effectsFrom: 193,
+    moves: [[3, 9, "stand"], [10, 17, "walk"], [18, 18, "stand"], [19, 25, "walk"], [26, 32, "crouch"],
+            [33, 37, "crouchAtk"], [38, 42, "upper"], [43, 45, "crouchAtk"], [46, 66, "punch"], [67, 81, "kick"],
+            [82, 88, "crouchAtk"], [89, 89, "kick"], [90, 90, "crouch"], [91, 91, "jump"], [92, 92, "kick"],
+            [93, 99, "flip"], [100, 101, "kick"], [102, 120, "hurt"], [121, 130, "down"], [131, 132, "crouch"],
+            [133, 141, "hurt"], [142, 142, "crouch"], [143, 146, "hurt"], [147, 151, "upper"], [152, 153, "stand"],
+            [154, 161, "throw"], [162, 168, "hurt"], [169, 169, "stand"], [170, 170, "hurt"], [171, 176, "upper"],
+            [177, 180, "hurt"], [181, 181, "down"], [182, 186, "win"], [187, 192, "throw"]],
+    // the arrow in flight becomes the lance; the bow that appears in his hand is dropped
+    projectile: { list: [211, 212, 213, 214], pose: "lance", scale: 3, budget: 0x600, slot: 0x3FDAA7, slotFrom: 0x021D66 },
+    blank: [199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210],
+    anims: [[186, "win", "placed"]],
+    special: { frames: [38, 42], pose: "magic" },   // down, down + high punch: magic launcher
+    poses: {
+      stand:  [[0x00, 0x26B6]],
+      walk:   [[0x01, 0x2300], [0x02, 0x236C], [0x03, 0x23F0], [0x04, 0x2464], [0x05, 0x24C8], [0x06, 0x253C]],
+      jump:   [[0x07, 0x25BA], [0x08, 0x2638]],
+      flip:   [[0x15, 0x2772], [0x13, 0x27C6], [0x16, 0x3002], [0x17, 0x3046]],
+      crouch: [[0x09, 0x272C]],
+      crouchAtk: [[0x0C, 0x2A18], [0x0D, 0x2A6C]],
+      punch:  [[0x0A, 0x291E], [0x0B, 0x299A]],
+      throw:  [[0x0A, 0x291E], [0x0B, 0x299A]],
+      kick:   [[0x14, 0x28A0], [0x13, 0x27C6]],
+      upper:  [[0x19, 0x3190], [0x1A, 0x31FC]],
+      magic:  [[0x19, 0x3190], [0x1A, 0x31FC], [0x1A, 0x326A]],
+      block:  [[0x18, 0x309A]],
+      hurt:   [[0x16, 0x3002], [0x17, 0x3046]],
+      down:   [[0x1B, 0x2AC2]],                   // armour knocked off
+      win:    [[0x12, 0x2F8C]],
+      lance:  [{ tiles: 0x07BF00, w: 4, h: 1 }],
+    },
   },
 };
 
@@ -222,10 +270,8 @@ function tileBytes(px, ox, oy) {                       // 8x8 of a 16x16 cell ->
 
 // DK's select-screen portrait: his chest-beat pose, head and shoulders, in the select screen's own
 // colours, as 8bpp tiles (4 across, 7 down).
-export function kongPortrait(mk3, dkc, D, K, sel) {
-  const pose = dkPose(dkc, D.frameTable, K.portraitPose);
+export function kongPortrait(mk3, pose, dk, sel) {
   const rgb = w => [(w & 31) << 3, ((w >> 5) & 31) << 3, ((w >> 10) & 31) << 3];
-  const dk = []; for (let i = 0; i < 16; i++) dk.push(rgb(dkc[K.palette + i * 2] | (dkc[K.palette + i * 2 + 1] << 8)));
   // colours 128+ are sprite colours that change with the cursor, so only 1-127 are used
   const pal = []; for (let c = 1; c < 128; c++) if (c % 16) { const o = sel.palette(c); pal.push([c, rgb(mk3[o] | (mk3[o + 1] << 8))]); }
   const nearest = ([r, g, b]) => { let best = 1, bd = 1e9; for (const [c, [R, G, B]] of pal) { const d = (r - R) ** 2 * 3 + (g - G) ** 2 * 4 + (b - B) ** 2 * 2; if (d < bd) { bd = d; best = c; } } return best; };
@@ -260,6 +306,10 @@ const GLYPHS = {
   I: [".###.", "..#..", "..#..", "..#..", "..#..", "..#..", ".###."],
   S: [".####", "#....", "#....", ".###.", "....#", "....#", "####."],
   A: [".###.", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
+  R: ["####.", "#...#", "#...#", "####.", "#.#..", "#..#.", "#...#"],
+  T: ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."],
+  H: ["#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
+  U: ["#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
 };
 // The big "<NAME> WINS" banner text: same letters, 9 rows tall and doubled in width, colour 1
 // fill and colour 2 shadow like the game's banner frames.
@@ -341,7 +391,12 @@ function brrEncode(pcm) {
 
 // DK's yell, resampled to the announcer's rate, as BRR blocks for the "Sub-Zero!" slot.
 export function kongVoice(mk3, dkc, yell, V) {
-  const src = brrDecode(dkc, yell.offset).map(x => x * 2);   // decoder output is 15-bit
+  let src = brrDecode(dkc, yell.offset).map(x => x * 2);   // decoder output is 15-bit
+  if (yell.seconds) {   // a short looping sample: play the loop for a while, fading out
+    const n = Math.round(yell.seconds * yell.rate), loop = src.slice(yell.loopTo || 0), out = src.slice();
+    while (out.length < n) out.push(...loop);
+    src = out.slice(0, n).map((x, i) => Math.round(x * Math.min(1, 1.6 * (1 - i / n))));
+  }
   const ref = brrDecode(mk3, V.offset).map(x => x * 2);
   const peak = a => a.reduce((m, x) => Math.max(m, Math.abs(x)), 1);
   const gain = Math.min(4, peak(ref) / peak(src));
@@ -407,7 +462,21 @@ function recolour(img, from, to) {
 }
 
 // Returns a new 8 MB ROM with the given Kongs (keys of KONGS) in place of their fighters.
-export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = KONGS) {
+// The art sources a recipe draws from: Donkey Kong Country (default) or Super Ghouls 'N Ghosts.
+function artSource(K, roms) {
+  if (K.art === "sgng") {
+    if (!roms.sgng) throw new Error(K.name + " needs the Super Ghouls 'N Ghosts ROM");
+    return { rom: roms.sgng, pose: id => sgngPose(roms.sgng, id), at: v => v };
+  }
+  if (!roms.dkc) throw new Error(K.name + " needs the Donkey Kong Country ROM");
+  return { rom: roms.dkc, pose: id => dkPose(roms.dkc, DKC.frameTable, id), at: v => typeof v === "string" ? DKC[v] : v };
+}
+
+// Returns a new 8 MB ROM with the given characters (keys of KONGS) in place of their fighters.
+// roms: { dkc, sgng } (or just the DKC ROM, as before); characters whose game is missing are skipped.
+export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
+  if (roms instanceof Uint8Array) roms = { dkc: roms };
+  which = (which || Object.keys(kongs)).filter(k => roms[kongs[k].art || "dkc"]);
   const rom = expandExHiROM(mk3Rom);
   const mirror = o => { const b = o >> 16, a = o & 0xFFFF; if (a >= 0x8000 && b < 0x40) rom[0x400000 + o] = rom[o]; };
   const lo = v => v & 0xFF, hi = v => (v >> 8) & 0xFF, L = (v, n = 3) => [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF].slice(0, n);
@@ -422,14 +491,14 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
   const descOf = setId => off((mk3Rom[off(MK3.descBanks + setId)] << 16) | r16(off(MK3.descAddrs + setId)));
   const setDesc = (setId, at) => { const ba = off(MK3.descBanks + setId), aa = off(MK3.descAddrs + setId);
     rom[ba] = T; rom[ba + 1] = 0; rom[aa] = lo(at); rom[aa + 1] = hi(at); [ba, ba + 1, aa, aa + 1].forEach(mirror); };
-  const setPalette = (dst, src) => { for (let i = 2; i < 32; i++) { rom[dst + i] = dkcRom[src + i]; mirror(dst + i); } };
+  const setPalette = (dst, srcRom, src) => { for (let i = 2; i < 32; i++) { rom[dst + i] = srcRom[src + i]; mirror(dst + i); } };
   const stats = {};
   const animEntries = [], specials = [], attackJobs = [];
   let animBank = 0, ap = 0;
   const animPut = bytes => { if (!animBank || ap + bytes.length > 0x8000) { animBank = bank++; ap = 0; } const a = ap; rom.set(bytes, exOff(animBank, ap)); ap += bytes.length; return [animBank, a]; };
 
   for (const key of which) {
-    const K = kongs[key], dOff = descOf(K.setId);
+    const K = kongs[key], dOff = descOf(K.setId), A = artSource(K, roms);
     const tt = (mk3Rom[dOff + 4] << 16) | r16(dOff + 2), fbank = mk3Rom[dOff + 7];
     const ft = (fbank << 16) | r16(dOff + 5), bt = (fbank << 16) | r16(dOff);
     const aux = (mk3Rom[dOff + 11] << 16) | r16(dOff + 12), recipe = { tileTable: tt, aux62: aux + 1, aux66: aux + 16 };
@@ -441,13 +510,13 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
         for (let j = 0; j < nw; j++) tileEntries = Math.max(tileEntries, ((mk3Rom[p + j * 2] & 0xFC) >> 2) + 1); p += nw * 2; } }
 
     // poses: every pose at the Kong's size, shrunk only if that one pose would not fit its VRAM budget
-    const kongPal = paletteAt(dkcRom, K.kongPalette), poses = {};
+    const kongPal = paletteAt(A.rom, K.kongPalette), poses = {};
     for (const [cat, ids] of Object.entries(K.poses)) {
       const budget = K.projectile && cat === K.projectile.pose ? K.projectile.budget : MK3.bodyBudget;
       const start = K.projectile && cat === K.projectile.pose ? K.projectile.scale : K.scale;
       poses[cat] = ids.map(id => {
-        let img = dkPose(dkcRom, DKC.frameTable, id);
-        if (K.artPalette && K.artPalette[cat]) img = recolour(img, paletteAt(dkcRom, DKC[K.artPalette[cat]]), kongPal);
+        let img = A.pose(id);
+        if (K.artPalette && K.artPalette[cat]) img = recolour(img, paletteAt(A.rom, A.at(K.artPalette[cat])), kongPal);
         for (let s = start; ; s -= 0.05) { const pc = pieces(scaled(img, s)); if (vramEnd(mk3Rom, pc.big.length, pc.small.length) <= budget || s < 0.8) return pc; }
       });
     }
@@ -465,6 +534,7 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
     for (const [cat, list] of Object.entries(poses)) poseWords[cat] = list.map(pc => [
       ...pc.big.map(c => ({ big: true, x: c.x, y: c.y, w: [tileWord(tileBytes(c.px, 0, 0)), tileWord(tileBytes(c.px, 8, 0)), tileWord(tileBytes(c.px, 0, 8)), tileWord(tileBytes(c.px, 8, 8))] })),
       ...pc.small.map(c => ({ big: false, x: c.x, y: c.y, w: [tileWord(tileBytes(c.px, c.qx, c.qy))] }))]);
+    const blankWord = K.blank ? tileWord(new Uint8Array(32)) : 0;   // frames drawn as nothing
     const entries = Math.ceil(tiles.length / 256);
     if (tileEntries + entries > 64) throw new Error(key + ": too many tiles");
     const table = new Uint8Array(256);
@@ -494,7 +564,8 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
         if (mv) cat = mv[2] === "hurt" && cat === "down" ? "down" : mv[2];
         if (cat && !poseWords[cat]) cat = poseWords.attack && cat === "lunge" ? "attack" : "stand";
         let bytes;
-        if (!cat) { const o = off(orig); bytes = mk3Rom.subarray(o, o + streamLength(mk3Rom, orig)); kept++; }
+        if (K.blank && K.blank.includes(n)) { bytes = stream([{ x: 0, y: 0, w: [blankWord] }], K.feetX, K.ground); replaced++; }
+        else if (!cat) { const o = off(orig); bytes = mk3Rom.subarray(o, o + streamLength(mk3Rom, orig)); kept++; }
         else {
           const list = poseWords[cat], k = counters[cat] = (counters[cat] || 0) + 1, pose = list[k % list.length], pb = poseBounds[cat][k % list.length];
           const grounded = !["jump", "roll", "flip", "hurt", "down", "cartwheel"].includes(cat) && b.oy + b.h >= K.ground - 6;
@@ -540,8 +611,8 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
     desc[5] = lo(framesAt); desc[6] = hi(framesAt); desc[7] = T;
     setDesc(K.setId, put(desc));
     // colours
-    setPalette(K.palette, K.kongPalette);
-    if (P && P.slot) setPalette(P.slot, DKC[P.slotFrom]);
+    setPalette(K.palette, A.rom, K.kongPalette);
+    if (P && P.slot) setPalette(P.slot, A.rom, A.at(P.slotFrom));
     stats[key] = { replaced, kept, tiles: tiles.length };
     attackJobs.push({ K, recipe, frameAddr, boxes });
   }
@@ -549,7 +620,8 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
   // ---- frame hook: new-move frames, then animated held frames ----
   const SP = MK3.special, LAST = SP.ram, DD = SP.ram + 4, FLAG = SP.ram + 8, cnt = MK3.counter;
   const hook = [], lbl = {}, fix = [];
-  const br = (op, l) => { hook.push(op, 0); fix.push([hook.length - 1, l]); };
+  // conditional branch to a label, as the opposite branch over a BRL so any distance works
+  const br = (op, l) => { hook.push(op ^ 0x20, 3, 0x82, 0, 0); fix.push([hook.length - 2, l]); };
   const toC28000 = () => hook.push(0x5C, 0x00, 0x80, 0x82);
   hook.push(0xBF, ...L(FLAG)); br(0xF0, "anims");                         // lda f:FLAG,x / beq anims
   specials.forEach((s, k) => {
@@ -573,7 +645,7 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
     lbl["an" + k] = hook.length;
   });
   toC28000();
-  for (const [at, l] of fix) { const d = lbl[l] - (at + 1); if (d > 127) throw new Error("branch too far"); hook[at] = d & 0xFF; }
+  for (const [at, l] of fix) { const d = lbl[l] - (at + 2); hook[at] = d & 0xFF; hook[at + 1] = (d >> 8) & 0xFF; }
   const hookAt = put(Uint8Array.from(hook));
   for (const site of MK3.callSites) patchCall(site, 0x828000, hookAt);
 
@@ -602,7 +674,7 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
   }
 
   // ---- select-screen portraits: copied over the unpacked picture, and again after the game's pass ----
-  const S = MK3.select, ports = which.map(k => { const K = kongs[k], tiles = kongPortrait(mk3Rom, dkcRom, DKC, { portraitPose: K.portraitPose, palette: K.kongPalette }, S);
+  const S = MK3.select, ports = which.map(k => { const K = kongs[k], A = artSource(K, roms), tiles = kongPortrait(mk3Rom, A.pose(K.portraitPose), paletteAt(A.rom, K.kongPalette), S);
     return { tiles, at: put(tiles), ram: S.tileRam(K.portraitTile) }; });
   const mvn = p => [0x8B, 0xDA, 0x5A, 0xA2, lo(p.at), hi(p.at), 0xA0, lo(p.ram), hi(p.ram), 0xA9, lo(p.tiles.length - 1), hi(p.tiles.length - 1), 0x54, p.ram >> 16, T, 0x7A, 0xFA, 0xAB];
   {
@@ -635,7 +707,7 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
   }
 
   // ---- announcer clips ----
-  for (const k of which) { const K = kongs[k], V = { ...MK3.voice, offset: K.voice + MK3.voice.prefix }; rom.set(kongVoice(mk3Rom, dkcRom, K.yell, V), V.offset); }
+  for (const k of which) { const K = kongs[k], V = { ...MK3.voice, offset: K.voice + MK3.voice.prefix }; rom.set(kongVoice(mk3Rom, artSource(K, roms).rom, K.yell, V), V.offset); }
 
   // ---- "<NAME> WINS" banners: frames of set 38 repainted, set 38's descriptor copied ----
   {
@@ -654,8 +726,18 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
     for (const k of which) {
       const K = kongs[k], origAddr = frameAddr(K.bannerFrame - 1), orig = buildFrame(mk3Rom, rc, origAddr);
       const x0 = Math.min(...orig.pieces.map(p => p.x)), x1 = Math.max(...orig.pieces.map(p => p.x + p.size)), y0 = Math.min(...orig.pieces.map(p => p.y));
-      const big = bannerText(K.name + " WINS"), W = x1 - x0, img = new Uint8Array(W * big.h);
-      for (let y = 0; y < big.h; y++) for (let x = 0; x < W; x++) img[y * W + x] = big.data[y * big.w + Math.floor(x * big.w / W)];
+      // if the original banner has a gap with no sprites (between the name and WINS), the name goes
+      // left of it and WINS right of it; otherwise the whole line is stretched across
+      const W = x1 - x0, bh = bannerText("A").h;
+      const covered = x => { for (let y = y0; y < y0 + bh; y++) if (!orig.pieces.some(p => x >= p.x && x < p.x + p.size && y >= p.y && y < p.y + p.size)) return false; return true; };
+      // (the gap nearest to where the name would end, if it is near enough)
+      const nw = bannerText(K.name).w, ww = bannerText("WINS").w, split = x0 + W * nw / (nw + ww + 8);
+      let gap = null; for (let x = x0; x < x1; x++) if (!covered(x)) { let e = x; while (e < x1 && !covered(e)) e++;
+        if (e - x >= 3 && Math.abs((x + e) / 2 - split) < W * 0.15 && (!gap || Math.abs((x + e) / 2 - split) < Math.abs((gap[0] + gap[1]) / 2 - split))) gap = [x, e]; x = e; }
+      const parts = gap ? [[K.name, x0, gap[0]], ["WINS", gap[1], x1]] : [[K.name + " WINS", x0, x1]];
+      const big = { h: bh }, img = new Uint8Array(W * big.h);
+      for (const [text, a0, a1] of parts) { const t = bannerText(text), w = a1 - a0;
+        for (let y = 0; y < big.h; y++) for (let x = 0; x < w; x++) img[y * W + a0 - x0 + x] = t.data[y * t.w + Math.floor(x * t.w / w)]; }
       const at = (x, y) => (x >= x0 && x < x1 && y >= y0 && y < y0 + big.h) ? img[(y - y0) * W + (x - x0)] : 0;
       const tileAt = (px, py) => { const t = new Uint8Array(256); for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) t[y * 16 + x] = at(px + x, py + y); return tileBytes(t, 0, 0); };
       const words = orig.pieces.flatMap(p => p.size === 16 ? [word(tileAt(p.x, p.y)), word(tileAt(p.x + 8, p.y)), word(tileAt(p.x, p.y + 8)), word(tileAt(p.x + 8, p.y + 8))] : [word(tileAt(p.x, p.y))]);
@@ -703,7 +785,8 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
       const centre = (y + ht / 2) / u - A.yBase, frac = (centre - ob[2]) / oh;
       const nh = Math.round(ht * f), ny = Math.round((kb[2] + frac * kh + A.yBase) * u - nh / 2);
       const put16 = (i, v) => { const a = dst + (rec - (A.copyFrom & 0xFFFF)) + i * 2; rom[a] = v & 0xFF; rom[a + 1] = (v >> 8) & 0xFF; };
-      put16(0, nx); put16(1, ny); put16(3, nh);
+      // a longer reach stretches the box forward and keeps its near edge, so close hits still land
+      put16(0, nx); put16(1, ny); put16(2, Math.max(wd, wd + nx - x)); put16(3, nh);
       (stats.attacks = stats.attacks || []).push(`${K.name.split(" ")[0]} ${rec.toString(16)}@${frame}: reach ${x}->${nx} top ${y}->${ny} h ${ht}->${nh}`);
     }
   }
@@ -713,4 +796,4 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
 }
 
 // the earlier name, used by the web page
-export const buildDkMk3 = (mk3Rom, dkcRom) => buildKongsMk3(mk3Rom, dkcRom);
+export const buildDkMk3 = (mk3Rom, dkcRom, sgngRom) => buildKongsMk3(mk3Rom, { dkc: dkcRom, sgng: sgngRom });

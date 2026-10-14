@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MK3 Kongs</title>
+<title>MK3 Guest Fighters</title>
 <style>
   :root { --bg:#0b0d14; --panel:#171a24; --text:#e8e9ec; --muted:#9aa0ab; --accent:#4fb3ff; --ok:#5fd68a; --bad:#ff6b6b; }
   @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg:#f4f4f6; --panel:#fff; --text:#16181d; --muted:#5d636e; } }
@@ -39,15 +39,16 @@
 </head>
 <body>
 <main>
-  <h1>Mortal Kombat 3, with Donkey Kong and Diddy Kong</h1>
-  <p class="host-only">Load your own dump of <em>Mortal Kombat 3 (USA)</em> and your <em>Donkey Kong Country (USA) (Rev 1)</em> dump. The page draws Donkey Kong and Diddy Kong from your DKC cartridge into MK3: DK takes Sub-Zero's slot and Diddy takes Kung Lao's, each with their own poses, specials, portrait, name and voice. Two players on one keyboard, or invite a friend online. The game files never leave your browser.</p>
+  <h1>Mortal Kombat 3, with Donkey Kong, Diddy Kong and Arthur</h1>
+  <p class="host-only">Load your own dump of <em>Mortal Kombat 3 (USA)</em> plus <em>Donkey Kong Country (USA) (Rev 1)</em> and/or <em>Super Ghouls 'N Ghosts (USA)</em>. The page draws the guest fighters from those cartridges into MK3: Donkey Kong takes Sub-Zero's slot and Diddy Kong takes Kung Lao's (from DKC), and Arthur takes Nightwolf's (from Super Ghouls 'N Ghosts), each with their own poses, specials, portrait, name and sound. Two players on one keyboard, or invite a friend online. The game files never leave your browser.</p>
   <p class="guest-only">You're joining a friend's game as player 2. Their game streams to you here and your controls run player 2. Press Start (<kbd>Enter</kbd>) to join in.</p>
   <div class="drops host-only">
     <div class="drop" id="dropMk3" tabindex="0"><b>Mortal Kombat 3 (USA)</b><br>drop the .sfc here or click<input type="file" id="fileMk3" accept=".sfc,.smc" hidden></div>
-    <div class="drop" id="dropDkc" tabindex="0"><b>Donkey Kong Country (USA) (Rev 1)</b><br>for Donkey Kong<input type="file" id="fileDkc" accept=".sfc,.smc" hidden></div>
+    <div class="drop" id="dropDkc" tabindex="0"><b>Donkey Kong Country (USA) (Rev 1)</b><br>for Donkey Kong and Diddy<input type="file" id="fileDkc" accept=".sfc,.smc" hidden></div>
+    <div class="drop" id="dropSgng" tabindex="0"><b>Super Ghouls 'N Ghosts (USA)</b><br>for Arthur<input type="file" id="fileSgng" accept=".sfc,.smc" hidden></div>
   </div>
   <div class="select host-only" id="select">
-    <label><input type="checkbox" id="useDk" checked disabled> Add Donkey Kong and Diddy Kong (needs the DKC file)</label><br>
+    <label><input type="checkbox" id="useDk" checked disabled> Add the guest fighters (from the games you added)</label><br>
     <a href="#" id="forgetRoms" hidden style="margin-right:12px;font-size:14px">Forget my game files</a><button id="startBtn">Start the game</button>
   </div>
   <div id="status"></div>
@@ -81,6 +82,7 @@ const S9X = "https://unpkg.com/@wasm-gaming/snes9x-wasm@0.1.1/dist/snes9x/snes9x
 // SHA-1s of the known-good unheadered dumps
 const GOOD_SHA1 = "8ee954e15b7d77a7941b107c8243b27acebdcbc0";
 const MK3_SHA1 = "58e4e1259a86faaadbc982176e569cb2038dbac5";   // Mortal Kombat 3 (USA).sfc
+const SGNG_SHA1 = "f12280b13eea88ca03d700b75cf3c13a0e13f3bc";  // Super Ghouls 'N Ghosts (USA).sfc
 const params = new URLSearchParams(location.search);
 const JOIN_ID = params.get("join");
 
@@ -165,7 +167,7 @@ document.getElementById("invite").onclick = () => {
 };
 
 // ---- host setup: ROMs, build ----
-let dkcRom = null, mk3Rom = null;
+let dkcRom = null, mk3Rom = null, sgngRom = null;
 // Verified game files are kept in this browser (IndexedDB, keyed by SHA-1) so they don't have to be
 // dropped in again. They never leave the computer; "Forget my game files" removes them.
 const romStore = {
@@ -178,7 +180,7 @@ const romStore = {
 };
 async function loadSaved() {
   let found = 0;
-  for (const [hash, fn] of [[GOOD_SHA1, setDkc], [MK3_SHA1, setMk3]]) { const rom = await romStore.get(hash); if (rom) { await fn(new Uint8Array(rom)); found++; } }
+  for (const [hash, fn] of [[GOOD_SHA1, setDkc], [SGNG_SHA1, setSgng], [MK3_SHA1, setMk3]]) { const rom = await romStore.get(hash); if (rom) { await fn(new Uint8Array(rom)); found++; } }
   if (found) {
     const forget = document.getElementById("forgetRoms"); forget.hidden = false;
     forget.onclick = async e => { e.preventDefault(); await romStore.clear(); location.reload(); };
@@ -197,7 +199,7 @@ async function setMk3(file) {
   romStore.put(hash, rom);
   document.getElementById("dropMk3").classList.add("done");
   document.getElementById("select").style.display = "block";
-  say(dkcRom ? "Both games verified. Start when ready." : "Mortal Kombat 3 verified. Add Donkey Kong Country for DK, or start the plain game.", "ok");
+  say(dkcRom || sgngRom ? "Games verified. Start when ready." : "Mortal Kombat 3 verified. Add Donkey Kong Country and/or Super Ghouls 'N Ghosts for the guest fighters, or start the plain game.", "ok");
 }
 async function setDkc(file) {
   const { rom, hash } = await readRom(file);
@@ -206,21 +208,31 @@ async function setDkc(file) {
   romStore.put(hash, rom);
   document.getElementById("dropDkc").classList.add("done");
   document.getElementById("useDk").disabled = false;
-  say(mk3Rom ? "Both games verified. Start when ready." : "Donkey Kong Country verified. Now add Mortal Kombat 3.", "ok");
+  say(mk3Rom ? "Games verified. Start when ready." : "Donkey Kong Country verified. Now add Mortal Kombat 3.", "ok");
+}
+async function setSgng(file) {
+  const { rom, hash } = await readRom(file);
+  if (hash !== SGNG_SHA1) { say("That file doesn't match the Super Ghouls 'N Ghosts (USA) dump (SHA-1 " + hash.slice(0, 12) + "\u2026).", "bad"); return; }
+  sgngRom = rom;
+  romStore.put(hash, rom);
+  document.getElementById("dropSgng").classList.add("done");
+  document.getElementById("useDk").disabled = false;
+  say(mk3Rom ? "Games verified. Start when ready." : "Super Ghouls 'N Ghosts verified. Now add Mortal Kombat 3.", "ok");
 }
 async function start() {
   if (engine || !mk3Rom) return;
   let rom = mk3Rom;
-  if (dkcRom && document.getElementById("useDk").checked) {
-    say("Drawing Donkey Kong and Diddy from your DKC ROM\u2026", "ok");
-    const { buildDkMk3 } = await import("./kongsmk3.js?v=" + Date.now());
-    rom = buildDkMk3(mk3Rom, dkcRom).rom;
-  }
+  const who = [dkcRom && "DK is in Sub-Zero's spot and Diddy in Kung Lao's", sgngRom && "Arthur is in Nightwolf's"].filter(Boolean);
+  if ((dkcRom || sgngRom) && document.getElementById("useDk").checked) {
+    say("Drawing the guest fighters from your game files\u2026", "ok");
+    const { buildKongsMk3 } = await import("./kongsmk3.js?v=" + Date.now());
+    rom = buildKongsMk3(mk3Rom, { dkc: dkcRom, sgng: sgngRom }).rom;
+  } else who.length = 0;
   document.querySelector(".drops").style.display = "none";
   document.getElementById("select").style.display = "none";
   try {
     await run(rom);
-    say("Running. DK is in Sub-Zero's spot and Diddy in Kung Lao's. Player 2 presses 2 (or Start on pad 2) to join.", "ok");
+    say("Running. " + (who.length ? who.join("; ") + ". " : "") + "Player 2 presses 2 (or Start on pad 2) to join.", "ok");
   } catch (err) {
     say("The emulator failed to start: " + err.message, "bad");
   }
@@ -287,9 +299,10 @@ if (JOIN_ID) {
   };
   wire("dropMk3", "fileMk3", setMk3);
   wire("dropDkc", "fileDkc", setDkc);
+  wire("dropSgng", "fileSgng", setSgng);
   document.getElementById("startBtn").onclick = start;
   loadSaved();
-  Object.assign(window, { setDkc, setMk3, start });   // for automated testing
+  Object.assign(window, { setDkc, setSgng, setMk3, start });   // for automated testing
 }
 </script>
 </body>
