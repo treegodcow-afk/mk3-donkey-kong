@@ -28,10 +28,12 @@ export const KONGS = {
     bannerFrame: 16,                               // "SUBZERO WINS" in set 38
     scale: 1.6, ground: 43, feetX: 6,
     effectsFrom: 186,                              // ice, sparks, body parts: kept
-    moves: [[3, 9, "stand"], [10, 24, "walk"], [25, 25, "stand"], [26, 32, "crouch"], [33, 39, "upper"],
-            [40, 44, "slap"], [45, 63, "punch"], [64, 65, "block"], [66, 76, "lunge"], [77, 83, "lunge"],
-            [84, 84, "roll"], [85, 85, "jump"], [86, 88, "roll"], [89, 95, "roll"], [96, 123, "hurt"],
-            [163, 169, "slap"], [156, 156, "rolling"], [144, 144, "throw"], [140, 142, "win"]],
+    // Sub-Zero's frame numbers by move (recorded from play, then checked side by side)
+    moves: [[3, 9, "stand"], [10, 24, "walk"], [25, 25, "stand"], [26, 32, "crouch"], [33, 34, "crouchAtk"],
+            [35, 39, "upper"], [40, 44, "crouchAtk"], [45, 63, "punch"], [64, 65, "block"], [66, 83, "lunge"],
+            [84, 84, "roll"], [85, 85, "jump"], [86, 95, "roll"], [96, 120, "hurt"], [121, 123, "roll"],
+            [124, 139, "hurt"], [140, 142, "win"], [144, 144, "throw"], [145, 148, "win"], [156, 156, "rolling"],
+            [163, 169, "crouchAtk"], [170, 174, "hurt"], [176, 180, "win"]],
     // the ice ball becomes a big spinning banana (its own palette slot gets banana yellow)
     projectile: { frames: [212, 221], pose: "banana", scale: 3, budget: 0x600, lead: true, slot: 0x3FB0DF, slotFrom: "bananaPalette" },
     anims: [[156, "rolling", "stand"], [217, "banana", "placed"], [142, "win2", "placed"]],   // held frames, animated
@@ -42,7 +44,8 @@ export const KONGS = {
       jump:   [0x130, 0x138, 0x140, 0x148, 0x150, 0x158],
       roll:   [0x4B8, 0x4C0, 0x4C8, 0x4D0, 0x4D8, 0x4E0],
       rolling: [0x4C0, 0x4C4, 0x4C8, 0x4CC, 0x4D0, 0x4D4, 0x4D8, 0x4DC],
-      crouch: [0x4EC, 0x5D4],
+      crouch: [0x4EC, 0x4B8],
+      crouchAtk: [0x270, 0x274, 0x278, 0x27C],   // low swipes: fists to the ground
       attack: [0x614, 0x770, 0x774, 0x778],
       punch:  [0x220, 0x224, 0x234, 0x238],
       upper:  [0x618, 0x61C, 0x620],
@@ -67,10 +70,13 @@ export const KONGS = {
     bannerFrame: 21,                               // "KUNG LAO WINS"
     scale: 2.0, ground: 46, feetX: 6,
     effectsFrom: 223,                              // slashes, animality: kept (the hat in flight is below)
-    moves: [[3, 9, "stand"], [10, 17, "walk"], [18, 19, "crouch"], [26, 31, "crouchAtk"], [32, 36, "upper"],
-            [37, 39, "punch"], [52, 53, "block"], [54, 57, "punch"], [59, 60, "kick"], [69, 82, "cartwheel"],
-            [83, 87, "kick"], [88, 90, "jump"], [91, 97, "flip"], [161, 161, "flip"], [100, 102, "flip"],
-            [103, 160, "hurt"], [186, 191, "run"], [192, 197, "throw"], [180, 181, "win"]],
+    // Kung Lao's frame numbers by move (recorded from play, then checked side by side)
+    moves: [[3, 9, "stand"], [10, 17, "walk"], [18, 25, "crouch"], [26, 31, "crouchAtk"], [32, 36, "upper"],
+            [37, 51, "punch"], [52, 53, "block"], [54, 57, "punch"], [58, 68, "kick"], [69, 82, "cartwheel"],
+            [83, 87, "kick"], [88, 90, "jump"], [91, 102, "flip"], [103, 120, "hurt"], [121, 142, "flip"],
+            [143, 146, "down"], [147, 148, "crouch"], [149, 156, "cartwheel"], [160, 160, "stand"], [161, 161, "flip"],
+            [162, 165, "kick"], [166, 179, "stand"], [180, 181, "win"], [182, 185, "stand"], [186, 191, "run"],
+            [192, 197, "throw"], [198, 202, "hurt"], [203, 217, "crouchAtk"]],
     // the hat in flight becomes a spinning barrel (the hat's palette slot gets the barrel's colours)
     projectile: { list: [223, 224, 225, 226, 227, 228, 229, 233, 234, 235, 240], pose: "barrel", scale: 1.6, budget: 0x600, slot: 0x3FB29F, slotFrom: "barrelPalette" },
     anims: [[181, "win", "placed"]],
@@ -434,6 +440,12 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
     const tiles = [], tileIndex = new Map();
     const tileWord = t => { const k = t.join(","); let i = tileIndex.get(k); if (i === undefined) { i = tiles.length; tiles.push(t); tileIndex.set(k, i); }
       return (((i & 0xFF) << 8) | ((tileEntries + (i >> 8)) * 4)); };
+    // each pose's drawn pixels, relative to its feet (for the hit box)
+    const bounds = pc => { let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      for (const c of pc.big) for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) if (c.px[y * 16 + x]) { x0 = Math.min(x0, c.x + x); x1 = Math.max(x1, c.x + x); y0 = Math.min(y0, c.y + y); y1 = Math.max(y1, c.y + y); }
+      for (const c of pc.small) for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) if (c.px[(c.qy + y) * 16 + c.qx + x]) { x0 = Math.min(x0, c.x + x); x1 = Math.max(x1, c.x + x); y0 = Math.min(y0, c.y + y); y1 = Math.max(y1, c.y + y); }
+      return { x0, y0, x1, y1 }; };
+    const poseBounds = {}; for (const [cat, list] of Object.entries(poses)) poseBounds[cat] = list.map(bounds);
     const poseWords = {};
     for (const [cat, list] of Object.entries(poses)) poseWords[cat] = list.map(pc => [
       ...pc.big.map(c => ({ big: true, x: c.x, y: c.y, w: [tileWord(tileBytes(c.px, 0, 0)), tileWord(tileBytes(c.px, 8, 0)), tileWord(tileBytes(c.px, 0, 8)), tileWord(tileBytes(c.px, 8, 8))] })),
@@ -453,7 +465,7 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
 
     // a frame stream per frame number; every group of 64 shares a bank
     const P = K.projectile, isProjectile = n => P && (P.list ? P.list.includes(n) : n >= P.frames[0] && n <= P.frames[1]);
-    const addrs = new Uint16Array(count), banks = [], counters = {}, placed = {};
+    const addrs = new Uint16Array(count), banks = [], counters = {}, placed = {}, boxes = {};
     let replaced = 0, kept = 0;
     for (let g = 0; g * 64 < count; g++, bank++) {
       banks.push(bank); let p = 0;
@@ -469,7 +481,7 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
         let bytes;
         if (!cat) { const o = off(orig); bytes = mk3Rom.subarray(o, o + streamLength(mk3Rom, orig)); kept++; }
         else {
-          const list = poseWords[cat], k = counters[cat] = (counters[cat] || 0) + 1, pose = list[k % list.length];
+          const list = poseWords[cat], k = counters[cat] = (counters[cat] || 0) + 1, pose = list[k % list.length], pb = poseBounds[cat][k % list.length];
           const grounded = !["jump", "roll", "flip", "hurt", "down", "cartwheel"].includes(cat) && b.oy + b.h >= K.ground - 6;
           let feetX = grounded ? K.feetX : Math.round(b.ox + b.w / 2), feetY = Math.min(K.ground, b.oy + b.h);
           if (proj) {   // centred on the projectile (at its leading end for long trails)
@@ -477,6 +489,7 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
             feetX = P.lead ? b.ox + b.w - 24 : Math.round(b.ox + b.w / 2); feetY = Math.round(b.oy + b.h / 2 - top / 2);
           }
           placed[n] = { feetX, feetY };
+          if (!proj) boxes[n] = [feetX + pb.x0, feetX + pb.x1 + 1, feetY + pb.y0, feetY + pb.y1 + 1];
           bytes = stream(pose, feetX, feetY); replaced++;
         }
         if (p + bytes.length > 0x8000) throw new Error("frame bank full");
@@ -499,7 +512,15 @@ export function buildKongsMk3(mk3Rom, dkcRom, which = ["dk", "diddy"], kongs = K
     }
     // descriptor copy
     const tableAt = put(table), framesAt = put(new Uint8Array(addrs.buffer)), banksAt = put(Uint8Array.from([...banks, 0, 0]));
+    // hit boxes: the game keeps one per frame number (left, right, top, bottom as signed bytes, at
+    // descriptor +14 in the bank at +8); the Kong's frames get boxes around their own art. That
+    // bank is shared with the fighter's overlay table (+9), which the Kongs don't use.
+    const boxAddr = (mk3Rom[dOff + 8] << 16) | r16(dOff + 14), boxTable = Uint8Array.from(mk3Rom.subarray(off(boxAddr), off(boxAddr) + count * 4));
+    const sb = v => Math.max(-128, Math.min(127, Math.round(v))) & 0xFF;
+    for (const [n, b] of Object.entries(boxes)) boxTable.set(b.map(sb), (n - 1) * 4);
+    const boxAt = put(boxTable);
     const desc = Uint8Array.from(mk3Rom.subarray(dOff, dOff + 16));
+    desc[8] = T; desc[9] = 0xFF; desc[10] = 0xFF; desc[14] = lo(boxAt); desc[15] = hi(boxAt);
     desc[0] = lo(banksAt); desc[1] = hi(banksAt); desc[2] = lo(tableAt); desc[3] = hi(tableAt); desc[4] = T;
     desc[5] = lo(framesAt); desc[6] = hi(framesAt); desc[7] = T;
     setDesc(K.setId, put(desc));
