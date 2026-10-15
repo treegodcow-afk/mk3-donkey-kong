@@ -155,12 +155,16 @@ let peer = null;
 // address); when one side is behind a strict network (phone hotspots, some ISPs) the video has to go
 // through a relay (TURN) server. A relay can be set once on the host ("Relay server" below the invite
 // button, kept in this browser); invite links then carry it to the guest.
+// The project's own relay (Metered TURN); a relay saved in the box below replaces it.
+const DEFAULT_RELAY = { urls: ["turn:global.relay.metered.ca:80", "turn:global.relay.metered.ca:80?transport=tcp", "turn:global.relay.metered.ca:443", "turns:global.relay.metered.ca:443?transport=tcp"],
+                        username: "c8a9375ca03f1ba43a3aa48d", credential: "y/SULq7JKNB0pssp" };
 function relayFromLink() { try { const t = params.get("turn"); return t ? JSON.parse(atob(t)) : null; } catch { return null; } }
 function savedRelay() { try { return JSON.parse(localStorage.getItem("turn") || "null"); } catch { return null; } }
 function peerOptions(relay) {
   const iceServers = [{ urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }, { urls: "stun:stun.cloudflare.com:3478" }];
-  if (relay && relay.urls) iceServers.push(relay);
-  return { config: { iceServers } };
+  iceServers.push(relay && relay.urls ? relay : DEFAULT_RELAY);
+  // ?relayonly=1 forces everything through the relay (for testing it)
+  return { config: { iceServers, iceTransportPolicy: params.get("relayonly") ? "relay" : "all" } };
 }
 // Report how the WebRTC connection under a PeerJS connection is doing.
 function watchIce(pc, who) {
