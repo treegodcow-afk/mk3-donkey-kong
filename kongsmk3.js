@@ -245,8 +245,11 @@ export const MK3 = {
   // Select screen: one 8bpp picture unpacked from $C3:0000 into RAM at $7F:3B00; VRAM tile $10C is
   // at $7F:6E00 and the rest follow in order. Colours 1-127 of the picture are fixed.
   select: { unpackCall: 0x02C217, unpacker: 0x86E41A, fillCall: 0x02C238, filler: 0x82C4DC, source: 0xC30000,
+            towerCall: 0x0592DA, towerShift: 0x6300 - 0x3B00,
+            // portraits use colours 48-127 only: the tower shows the same picture with those colours moved
+            // up by 80 (its colours below 48 are different)
             tileRam: t => 0x7F6E00 + (t - 0x10C) * 64, w: 32, h: 56,
-            palette: c => (c < 48 ? 0x3F9090 + 2 * c : 0x3F90F4 + 2 * (c - 48)) },
+            palette: c => (c < 48 ? null : 0x3F90F4 + 2 * (c - 48)) },
   // Fight name bar: every name is in one strip picture unpacked from $F6:0396 to $7F:5300 (call at
   // $80:FF0A); a table at $80:FF0F gives each name's (first tile, tiles, padding).
   names: { unpackCall: 0x00FF0A, buffer: 0x7F5300, table: 0x00FF0F },
@@ -267,6 +270,10 @@ export const MK3 = {
   // gravity adds 128 per frame. The hook at $83:FC78 (two STZs) rewrites a guest's velocities there.
   physics: { site: 0x03FC78, vx: 0x3B46, vy: 0x3BFE, x: 0x3CB6, y: 0x3E26, health: [0x3634, 0x37F6], ceiling: 20, set: 0x5206, held: 0x35D0, press: 0x35D4, ram: 0xFFA0,
              jumpVy: -2560 + 128, gravity: 128, walk: [832, 576], run: 2048, peak: 96 },   // (gravity, $3F96, is added before the hook)
+  // Select screen squares: fighter number (cursor square) -> character at $84:E3D7 (number 7, the "?",
+  // is $FF = random); the portrait tile of each square.
+  roster: { table: 0x04E3D7, cells: [[0, 0x1E7], [1, 0x13F], [2, 0xCF], [3, 0x97], [4, 0x203], [5, 0xB3], [6, 0x123], [7, 0],
+                                     [8, 0x107], [9, 0x177], [10, 0x15B], [11, 0xEB], [12, 0x1CB], [13, 0x193], [14, 0x1AF]] },
   // "Battle" screen pictures: per fighter (names entry) a bank ($80:F414), packed 6bpp tiles ($80:F432), packed
   // 32x32 tile map ($80:F450), raw 64-colour palette ($80:F46E) and tile count ($80:F3F6). Each is unpacked by
   // $86:E41A from three call sites; those go through a wrapper that copies data stored unpacked (in banks below
@@ -358,7 +365,7 @@ function tileBytes(px, ox, oy) {                       // 8x8 of a 16x16 cell ->
 export function kongPortrait(mk3, pose, dk, sel) {
   const rgb = w => [(w & 31) << 3, ((w >> 5) & 31) << 3, ((w >> 10) & 31) << 3];
   // colours 128+ are sprite colours that change with the cursor, so only 1-127 are used
-  const pal = []; for (let c = 1; c < 128; c++) if (c % 16) { const o = sel.palette(c); pal.push([c, rgb(mk3[o] | (mk3[o + 1] << 8))]); }
+  const pal = []; for (let c = 1; c < 128; c++) if (c % 16) { const o = sel.palette(c); if (o != null) pal.push([c, rgb(mk3[o] | (mk3[o + 1] << 8))]); }
   const nearest = ([r, g, b]) => { let best = 1, bd = 1e9; for (const [c, [R, G, B]] of pal) { const d = (r - R) ** 2 * 3 + (g - G) ** 2 * 4 + (b - B) ** 2 * 2; if (d < bd) { bd = d; best = c; } } return best; };
   const bg = nearest([24, 16, 32]), bg2 = nearest([56, 40, 64]);
   // scale the pose so it is 34 px wide, keep the top (head and shoulders), centred
@@ -577,7 +584,7 @@ const rgbPal = b => { const p = []; for (let i = 0; i < 16; i++) p.push(rgbOf(b[
 
 // Returns a new 8 MB ROM with the given characters (keys of KONGS) in place of their fighters.
 // roms: { dkc, sgng } (or just the DKC ROM, as before); characters whose game is missing are skipped.
-export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
+export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS, opts = {}) {
   if (roms instanceof Uint8Array) roms = { dkc: roms };
   which = (which || Object.keys(kongs)).filter(k => roms[kongs[k].art || "dkc"]);
   const rom = expandExHiROM(mk3Rom);
@@ -782,15 +789,32 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
 
   // ---- select-screen portraits: copied over the unpacked picture, and again after the game's pass ----
   const S = MK3.select, ports = which.map(k => { const K = kongs[k], A = artSource(K, roms), tiles = kongPortrait(mk3Rom, A.pose(K.portraitPose), rgbPal(A.pal(K.kongPalette)), S);
-    return { tiles, at: put(tiles), ram: S.tileRam(K.portraitTile) }; });
+    return { tiles, at: put(tiles), ram: S.tileRam(K.portraitTile), K }; });
+  // ---- guests only: every square of the select screen picks a guest (the fighter-number -> character
+  // table at $84:E3D7), and shows that guest's portrait ----
+  if (opts.guestsOnly !== false && ports.length) {
+    const R = MK3.roster, own = new Set(ports.map(p => p.K.fighterId)); let k = 0;
+    R.cells.forEach(([num, tile]) => {
+      const cur = mk3Rom[R.table + num];
+      if (own.has(cur)) return;                                   // a guest's own square
+      const p = ports[k++ % ports.length];
+      rom[R.table + num] = p.K.fighterId; mirror(R.table + num);
+      if (tile) ports.push({ tiles: p.tiles, at: p.at, ram: S.tileRam(tile), K: p.K });
+    });
+  }
   const mvn = p => [0x8B, 0xDA, 0x5A, 0xA2, lo(p.at), hi(p.at), 0xA0, lo(p.ram), hi(p.ram), 0xA9, lo(p.tiles.length - 1), hi(p.tiles.length - 1), 0x54, p.ram >> 16, T, 0x7A, 0xFA, 0xAB];
   {
     const w = [0xA5, 0x7C, 0x48, 0xA5, 0x7A, 0x48, 0x22, ...L(S.unpacker), 0xC2, 0x30, 0x48,
       0xA3, 0x03, 0xC9, lo(S.source), hi(S.source)];
-    const body = ports.flatMap(mvn);
-    w.push(0xD0, 0x0A + body.length, 0xA3, 0x05, 0x29, 0xFF, 0x00, 0xC9, S.source >> 16, 0x00, 0xD0, body.length, ...body,
+    // every copy in one routine (there can be many squares), called from both places below
+    const copyAt = put(Uint8Array.from([...ports.flatMap(mvn), 0x6B])), body = [0x22, lo(copyAt), hi(copyAt), T];
+    // guests only: the characters under the starting cursors (squares 0 and 4) come from the table too
+    // (otherwise picking without moving gives whoever was left in $51D6/$51D8 from the attract mode)
+    const firstBody = opts.guestsOnly !== false
+      ? [0xA9, rom[MK3.roster.table], 0x00, 0x8F, ...L(0x7E51D6), 0xA9, rom[MK3.roster.table + 4], 0x00, 0x8F, ...L(0x7E51D8), ...body] : body;
+    w.push(0xD0, 0x0A + firstBody.length, 0xA3, 0x05, 0x29, 0xFF, 0x00, 0xC9, S.source >> 16, 0x00, 0xD0, firstBody.length, ...firstBody,
       0xA3, 0x01, 0x83, 0x05, 0x68, 0x68, 0x68, 0x6B);
-    if (body.length + 0x0A > 127) throw new Error("portrait copy too long");
+    if (firstBody.length + 0x0A > 127) throw new Error("portrait copy too long");
     patchCall(S.unpackCall, S.unpacker, put(Uint8Array.from(w)));
     // after the game's own pass over the picture: copy again if the buffer held our tiles before it
     const K0 = 10 * 64, p0 = ports[0], tag = p0.at + K0, ram = p0.ram + K0;
@@ -801,6 +825,9 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
       0xA3, 0x03, 0xAA, 0xA3, 0x05, 0x22, ...L(S.filler), 0xC2, 0x30, 0x68, 0xF0, body.length, ...body,
       0x68, 0x68, 0x6B];
     patchCall(S.fillCall, S.filler, put(Uint8Array.from(f)));
+    // the 1-player tower unpacks the same picture to $7F:6300 and takes its small portraits from it
+    const towerCopy = put(Uint8Array.from([...ports.flatMap(p => mvn({ ...p, ram: p.ram + S.towerShift })), 0x6B]));
+    patchCall(S.towerCall, S.unpacker, put(Uint8Array.from([0x22, ...L(S.unpacker), 0x08, 0xC2, 0x30, 0x48, 0x22, lo(towerCopy), hi(towerCopy), T, 0x68, 0x28, 0x6B])));
   }
 
   // ---- fight name bar ----
