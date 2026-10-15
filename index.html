@@ -39,8 +39,8 @@
 </head>
 <body>
 <main>
-  <h1>Mortal Kombat 3, with Donkey Kong, Diddy Kong and Arthur</h1>
-  <p class="host-only">Donkey Kong takes Sub-Zero's slot, Diddy Kong takes Kung Lao's and Arthur takes Nightwolf's, each with their own poses, specials, portrait, name and sound. Two players on one keyboard, or invite a friend online (they don't need any file).</p>
+  <h1>Mortal Kombat 3, with Donkey Kong, Diddy Kong, Arthur and Mario</h1>
+  <p class="host-only">Donkey Kong takes Sub-Zero's slot, Diddy Kong takes Kung Lao's, Arthur takes Nightwolf's and Mario takes Liu Kang's, each with their own poses, specials, portrait, name and sound. Two players on one keyboard, or invite a friend online (they don't need any file).</p>
   <p class="guest-only">You're joining a friend's game as player 2. Their game streams to you here and your controls run player 2. Press Start (<kbd>Enter</kbd>) to join in.</p>
   <div class="drops host-only">
     <div class="drop" id="dropAny" tabindex="0"><b>Drop your game file here</b><br><em>Mortal Kombat 3 - Guest Fighters.sfc</em>, or click to pick it<br>
@@ -92,6 +92,7 @@ const S9X = "https://unpkg.com/@wasm-gaming/snes9x-wasm@0.1.1/dist/snes9x/snes9x
 const GOOD_SHA1 = "8ee954e15b7d77a7941b107c8243b27acebdcbc0";
 const MK3_SHA1 = "58e4e1259a86faaadbc982176e569cb2038dbac5";   // Mortal Kombat 3 (USA).sfc
 const SGNG_SHA1 = "f12280b13eea88ca03d700b75cf3c13a0e13f3bc";  // Super Ghouls 'N Ghosts (USA).sfc
+const SMW_SHA1 = "6b47bb75d16514b6a476aa0c73a683a2a4c18765";   // Super Mario World (USA).sfc
 const params = new URLSearchParams(location.search);
 const JOIN_ID = params.get("join");
 
@@ -204,7 +205,7 @@ document.getElementById("invite").onclick = () => {
 };
 
 // ---- host setup: ROMs, build ----
-let dkcRom = null, mk3Rom = null, sgngRom = null, builtRom = null;
+let dkcRom = null, mk3Rom = null, sgngRom = null, smwRom = null, builtRom = null;
 // Verified game files are kept in this browser (IndexedDB, keyed by SHA-1) so they don't have to be
 // dropped in again. They never leave the computer; "Forget my game files" removes them.
 const romStore = {
@@ -220,7 +221,7 @@ async function loadSaved() {
   const built = await romStore.get("built");
   if (built) { await setMk3(new Uint8Array(built)); found++; }
   else
-  for (const [hash, fn] of [[GOOD_SHA1, setDkc], [SGNG_SHA1, setSgng], [MK3_SHA1, setMk3]]) { const rom = await romStore.get(hash); if (rom) { await fn(new Uint8Array(rom)); found++; } }
+  for (const [hash, fn] of [[GOOD_SHA1, setDkc], [SGNG_SHA1, setSgng], [SMW_SHA1, setSmw], [MK3_SHA1, setMk3]]) { const rom = await romStore.get(hash); if (rom) { await fn(new Uint8Array(rom)); found++; } }
   if (found) {
     document.getElementById("dropAny").classList.add("done");
     const forget = document.getElementById("forgetRoms"); forget.hidden = false;
@@ -262,6 +263,11 @@ async function setDkc(file) {
   document.getElementById("useDk").disabled = false;
   summary();
 }
+async function setSmw(file) {
+  const { rom, hash } = await readRom(file);
+  if (hash !== SMW_SHA1) { say("That file doesn't match the Super Mario World (USA) dump.", "bad"); return; }
+  smwRom = rom; romStore.put(hash, rom); summary();
+}
 async function setSgng(file) {
   const { rom, hash } = await readRom(file);
   if (hash !== SGNG_SHA1) { say("That file doesn't match the Super Ghouls 'N Ghosts (USA) dump (SHA-1 " + hash.slice(0, 12) + "\u2026).", "bad"); return; }
@@ -272,9 +278,9 @@ async function setSgng(file) {
   summary();
 }
 function summary() {
-  if (builtRom) return say("Game file ready: Donkey Kong, Diddy Kong and Arthur are in. Press Start the game.", "ok");
+  if (builtRom) return say("Game file ready: the guest fighters are in. Press Start the game.", "ok");
   if (!mk3Rom) return say((dkcRom || sgngRom) ? "Got it. Now add Mortal Kombat 3 (USA) as well, or just use the finished game file." : "", "ok");
-  const missing = [!dkcRom && "DK and Diddy need Donkey Kong Country", !sgngRom && "Arthur needs Super Ghouls 'N Ghosts"].filter(Boolean);
+  const missing = [!dkcRom && "DK and Diddy need Donkey Kong Country", !sgngRom && "Arthur needs Super Ghouls 'N Ghosts", !smwRom && "Mario needs Super Mario World"].filter(Boolean);
   say("Ready. " + (missing.length ? missing.join("; ") + " (or drop the finished game file instead). " : "All three guest fighters are in. ") + "Press Start the game.", "ok");
 }
 // Any dropped file goes where it belongs: the finished game, or one of the three cartridges.
@@ -284,6 +290,7 @@ async function addFiles(files) {
     if (isBuilt(rom) || hash === MK3_SHA1) await setMk3(rom);
     else if (hash === GOOD_SHA1) await setDkc(rom);
     else if (hash === SGNG_SHA1) await setSgng(rom);
+    else if (hash === SMW_SHA1) await setSmw(rom);
     else { say("\"" + f.name + "\" isn't a file this page knows. Use Mortal Kombat 3 - Guest Fighters.sfc from your Desktop.", "bad"); continue; }
     document.getElementById("dropAny").classList.add("done");
   }
@@ -292,16 +299,16 @@ async function start() {
   if (engine || !(mk3Rom || builtRom)) return;
   if (builtRom) {
     document.querySelector(".drops").style.display = "none"; document.getElementById("select").style.display = "none";
-    try { await run(builtRom); say("Running. DK is in Sub-Zero's spot, Diddy in Kung Lao's, Arthur in Nightwolf's. Player 2 presses 2 (or Start on pad 2) to join.", "ok"); }
+    try { await run(builtRom); say("Running. DK is in Sub-Zero's spot, Diddy in Kung Lao's, Arthur in Nightwolf's, Mario in Liu Kang's. Player 2 presses 2 (or Start on pad 2) to join.", "ok"); }
     catch (err) { say("The emulator failed to start: " + err.message, "bad"); }
     return;
   }
   let rom = mk3Rom;
-  const who = [dkcRom && "DK is in Sub-Zero's spot and Diddy in Kung Lao's", sgngRom && "Arthur is in Nightwolf's"].filter(Boolean);
-  if ((dkcRom || sgngRom) && document.getElementById("useDk").checked) {
+  const who = [dkcRom && "DK is in Sub-Zero's spot and Diddy in Kung Lao's", sgngRom && "Arthur is in Nightwolf's", smwRom && "Mario is in Liu Kang's"].filter(Boolean);
+  if ((dkcRom || sgngRom || smwRom) && document.getElementById("useDk").checked) {
     say("Drawing the guest fighters from your game files\u2026", "ok");
     const { buildKongsMk3 } = await import("./kongsmk3.js?v=" + Date.now());
-    rom = buildKongsMk3(mk3Rom, { dkc: dkcRom, sgng: sgngRom }).rom;
+    rom = buildKongsMk3(mk3Rom, { dkc: dkcRom, sgng: sgngRom, smw: smwRom }).rom;
   } else who.length = 0;
   document.querySelector(".drops").style.display = "none";
   document.getElementById("select").style.display = "none";

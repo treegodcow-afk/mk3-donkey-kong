@@ -12,6 +12,7 @@
 import { buildFrame, compose } from "./mk3frames.js";
 import { hiromOffset, parseFrame } from "./dkcskin.js";
 import { sgngPose, SGNG } from "./sgngart.js";
+import { smwPose, smwPalette } from "./smwart.js";
 
 export const DKC = {
   frameTable: 0x3BCC9C,            // file offset; 4 bytes per frame id (addr16, bank, y)
@@ -177,6 +178,61 @@ export const KONGS = {
                { base: [0x04, 0x2464], add: { tiles: 0x07BF00, w: 4, h: 1 }, dx: -6, dy: -20 }],
     },
   },
+  // Mario from Super Mario World, in Liu Kang's slot. Pose ids are [head, body] addresses in SMW's
+  // unpacked player graphics (see smwart.js); Liu Kang's fireballs become Mario's fireballs.
+  mario: {
+    art: "smw", name: "MARIO", setId: 26,           // Liu Kang's graphics set
+    fighterId: 13,
+    attacks: [],
+    palette: 0x3FC2B9,                              // Liu Kang's palette
+    // fire Mario: white, black, three shared sprite colours, then his own ten
+    kongPalette: [0x7FFF, 0x0000, [0x003282, 3], [0x0032F0, 10]],
+    portraitPose: [0x3C00, 0x2000], portraitTile: 0x203,
+    vsPose: [0x3D00, 0x20C0],                       // the jump, fist up
+    namesEntry: 13, freeTile: 150,
+    // the jump sound: SMW's square-wave sample swept up in pitch, as the game plays it
+    voice: 0x0FF6F4, yell: { offset: 0x078058, loopTo: 64, rate: 32000, seconds: 0.3,
+      pitches: [0xF18, 0x102F, 0x10C2, 0x10F8, 0x116A, 0x11DC, 0x1251, 0x12C6, 0x1347, 0x1386, 0x1404, 0x148B, 0x1524] },
+    bannerFrame: 25,                                // "LIU KANG WINS"
+    scale: 3, ground: 46, feetX: 6,
+    // SMW (measured, 1/16 px a frame there): walk 20, run 36, speed changes 1.5 a frame (1 when letting
+    // go), jump 82 up, gravity 3 while the button is held and 6 after, falls at most 70, steerable in the
+    // air. Landing on the opponent's head (a stomp) hurts badly and bounces him back up.
+    physics: { walk: 320, run: 576, accel: 24, decel: 16, vy0: 1312, gHold: 48, gRelease: 96, maxFall: 1120, airControl: true,
+               stomp: { damage: 40, rangeX: 44, above: [60, 104] } },
+    effectsFrom: 197,
+    moves: [[3, 4, "throw"], [5, 7, "kick"], [8, 12, "kick"], [13, 14, "stand"], [15, 16, "crouch"], [17, 25, "crouchAtk"],
+            [26, 28, "crouch"], [29, 38, "flip"], [39, 39, "kick"], [40, 40, "upper"], [41, 42, "kick"], [43, 47, "down"],
+            [48, 49, "block"], [50, 56, "kick"], [57, 61, "punch"], [62, 63, "throw"], [64, 65, "jump"], [66, 74, "kick"],
+            [75, 81, "hurt"], [82, 83, "down"], [84, 85, "kick"], [86, 91, "punch"], [92, 93, "throw"], [94, 99, "walk"],
+            [100, 105, "throw"], [106, 112, "kick"], [113, 119, "stand"], [120, 135, "hurt"], [136, 142, "down"],
+            [143, 144, "crouch"], [145, 149, "upper"], [150, 162, "win"], [163, 169, "walk"], [170, 175, "hurt"],
+            [176, 180, "stand"], [181, 189, "down"], [190, 196, "crouchAtk"]],
+    // Liu Kang's fireball in flight becomes Mario's fireball (its palette slot gets the fireball's colours)
+    // a Mario mirror match: player 2 is fire Luigi (Liu Kang's second colour set)
+    altPalette: { slot: 0x3FC2D9, from: [0x7FFF, 0x0000, [0x003282, 3], [0x003304, 10]] },
+    projectile: { list: [197, 198, 199, 200, 201, 202], pose: "fireball", scale: 4, budget: 0x600, slot: 0x3FC319,
+                  slotFrom: [0x7FFF, 0x0000, [0x00329A, 5]] },
+    anims: [[162, "win", "placed"]],
+    special: { frames: [145, 149], pose: "upper" }, // down, down + high punch: jumping uppercut
+    poses: {
+      stand:  [[0x3C00, 0x2000]],
+      walk:   [[0x3C00, 0x2000], [0x3C00, 0x2040], [0x3C00, 0x2080], [0x3C00, 0x2040]],
+      jump:   [[0x3D00, 0x20C0], [0x51C0, 0x5480]],
+      flip:   [[0x4100, 0x21C0], [0x3C00, 0x2000], [0x4400, 0x2400], [0x3C00, 0x2040]],   // spin jump
+      crouch: [[0x5140, 0x2180]],
+      crouchAtk: [[0x5140, 0x2180], [0x3C00, 0x2CC0]],
+      punch:  [[0x44C0, 0x48C0], [0x3C00, 0x2000]],
+      throw:  [[0x44C0, 0x48C0]],
+      kick:   [[0x3C00, 0x2CC0]],
+      upper:  [[0x3D00, 0x20C0]],
+      block:  [[0x4000, 0x2100]],
+      hurt:   [[0x4000, 0x2100], [0x51C0, 0x5480]],
+      down:   [[0x6500, 0x6540]],
+      win:    [[0x4100, 0x21C0], [0x3D00, 0x20C0]],
+      fireball: [{ tile: 0x2C }, { tile: 0x2C, flip: "h" }, { tile: 0x2C, flip: "hv" }, { tile: 0x2C, flip: "v" }],
+    },
+  },
 };
 
 // MK3 addresses shared by every fighter
@@ -198,6 +254,7 @@ export const MK3 = {
   voice: { prefix: 3, rate: 6000, table: [0x150F00, 0x151400] },
   // "<NAME> WINS" banners are frames of graphics set 38
   bannerSet: 38,
+  bannerDy: 44,   // explicit piece positions in a banner frame land this much higher on screen than its own pieces
   // Attack boxes: 13-byte records in bank $83 (reach, top, width, height as words in game units of
   // 25/16 pixel; top counts from 60 px above the frame origin; then damage/reaction bytes), found via
   // a per-fighter list at $83:D22B. The whole area is copied to bank $7D (whose upper half is only a
@@ -208,7 +265,7 @@ export const MK3 = {
   // to its position (x $3CB6.$3D6E, y $3E26.$3EDE), objects indexed by Y (P1 0, P2 2). Walking sets
   // x velocity to +-832 forward / +-576 back, running +-2048; a jump starts with y velocity -2560 and
   // gravity adds 128 per frame. The hook at $83:FC78 (two STZs) rewrites a guest's velocities there.
-  physics: { site: 0x03FC78, vx: 0x3B46, vy: 0x3BFE, y: 0x3E26, ceiling: 20, set: 0x5206, held: 0x35D0, press: 0x35D4, ram: 0xFFA0,
+  physics: { site: 0x03FC78, vx: 0x3B46, vy: 0x3BFE, x: 0x3CB6, y: 0x3E26, health: [0x3634, 0x37F6], ceiling: 20, set: 0x5206, held: 0x35D0, press: 0x35D4, ram: 0xFFA0,
              jumpVy: -2560 + 128, gravity: 128, walk: [832, 576], run: 2048, peak: 96 },   // (gravity, $3F96, is added before the hook)
   // "Battle" screen pictures: per fighter (names entry) a bank ($80:F414), packed 6bpp tiles ($80:F432), packed
   // 32x32 tile map ($80:F450), raw 64-colour palette ($80:F46E) and tile count ($80:F3F6). Each is unpacked by
@@ -338,6 +395,7 @@ const GLYPHS = {
   T: ["#####", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."],
   H: ["#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
   U: ["#...#", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
+  M: ["#...#", "##.##", "#.#.#", "#.#.#", "#...#", "#...#", "#...#"],
 };
 // The big "<NAME> WINS" banner text: same letters, 9 rows tall and doubled in width, colour 1
 // fill and colour 2 shadow like the game's banner frames.
@@ -420,7 +478,16 @@ function brrEncode(pcm) {
 // DK's yell, resampled to the announcer's rate, as BRR blocks for the "Sub-Zero!" slot.
 export function kongVoice(mk3, dkc, yell, V) {
   let src = brrDecode(dkc, yell.offset).map(x => x * 2);   // decoder output is 15-bit
-  if (yell.seconds) {   // a short looping sample: play the loop for a while, fading out
+  if (yell.pitches) {   // a looping sample played at a pitch that changes every frame (60 a second)
+    const out = [], loop = yell.loopTo || 0, n = Math.round(yell.seconds * yell.rate); let ph = 0;
+    for (let i = 0; i < n; i++) {
+      const f = Math.min(yell.pitches.length - 1, Math.floor(i * 60 / yell.rate));
+      ph += yell.pitches[f] / 4096 * 32000 / yell.rate;
+      while (ph >= src.length) ph -= src.length - loop;
+      out.push(Math.round(src[Math.floor(ph)] * Math.min(1, 1.6 * (1 - i / n))));
+    }
+    src = out;
+  } else if (yell.seconds) {   // a short looping sample: play the loop for a while, fading out
     const n = Math.round(yell.seconds * yell.rate), loop = src.slice(yell.loopTo || 0), out = src.slice();
     while (out.length < n) out.push(...loop);
     src = out.slice(0, n).map((x, i) => Math.round(x * Math.min(1, 1.6 * (1 - i / n))));
@@ -492,14 +559,21 @@ function recolour(img, from, to) {
 
 // Returns a new 8 MB ROM with the given Kongs (keys of KONGS) in place of their fighters.
 // The art sources a recipe draws from: Donkey Kong Country (default) or Super Ghouls 'N Ghosts.
+// A palette spec is a file offset (16 colours there), a DKC palette name, or (SMW) a list of parts.
 function artSource(K, roms) {
+  const bytesAt = (rom, o) => Uint8Array.from(rom.subarray(o, o + 32));
+  if (K.art === "smw") {
+    if (!roms.smw) throw new Error(K.name + " needs the Super Mario World ROM");
+    return { rom: roms.smw, pose: id => smwPose(roms.smw, id), pal: v => Array.isArray(v) ? smwPalette(roms.smw, v) : bytesAt(roms.smw, v) };
+  }
   if (K.art === "sgng") {
     if (!roms.sgng) throw new Error(K.name + " needs the Super Ghouls 'N Ghosts ROM");
-    return { rom: roms.sgng, pose: id => sgngPose(roms.sgng, id), at: v => v };
+    return { rom: roms.sgng, pose: id => sgngPose(roms.sgng, id), pal: v => bytesAt(roms.sgng, v) };
   }
   if (!roms.dkc) throw new Error(K.name + " needs the Donkey Kong Country ROM");
-  return { rom: roms.dkc, pose: id => dkPose(roms.dkc, DKC.frameTable, id), at: v => typeof v === "string" ? DKC[v] : v };
+  return { rom: roms.dkc, pose: id => dkPose(roms.dkc, DKC.frameTable, id), pal: v => bytesAt(roms.dkc, typeof v === "string" ? DKC[v] : v) };
 }
+const rgbPal = b => { const p = []; for (let i = 0; i < 16; i++) p.push(rgbOf(b[i * 2] | (b[i * 2 + 1] << 8))); return p; };
 
 // Returns a new 8 MB ROM with the given characters (keys of KONGS) in place of their fighters.
 // roms: { dkc, sgng } (or just the DKC ROM, as before); characters whose game is missing are skipped.
@@ -520,7 +594,7 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
   const descOf = setId => off((mk3Rom[off(MK3.descBanks + setId)] << 16) | r16(off(MK3.descAddrs + setId)));
   const setDesc = (setId, at) => { const ba = off(MK3.descBanks + setId), aa = off(MK3.descAddrs + setId);
     rom[ba] = T; rom[ba + 1] = 0; rom[aa] = lo(at); rom[aa + 1] = hi(at); [ba, ba + 1, aa, aa + 1].forEach(mirror); };
-  const setPalette = (dst, srcRom, src) => { for (let i = 2; i < 32; i++) { rom[dst + i] = srcRom[src + i]; mirror(dst + i); } };
+  const setPalette = (dst, bytes) => { for (let i = 2; i < 32; i++) { rom[dst + i] = bytes[i]; mirror(dst + i); } };
   const stats = {};
   const animEntries = [], specials = [], attackJobs = [];
   let animBank = 0, ap = 0;
@@ -539,14 +613,14 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
         for (let j = 0; j < nw; j++) tileEntries = Math.max(tileEntries, ((mk3Rom[p + j * 2] & 0xFC) >> 2) + 1); p += nw * 2; } }
 
     // poses: every pose at the Kong's size, shrunk only if that one pose would not fit its VRAM budget
-    const kongPal = paletteAt(A.rom, K.kongPalette), poses = {};
+    const kongPal = rgbPal(A.pal(K.kongPalette)), poses = {};
     for (const [cat, ids] of Object.entries(K.poses)) {
       const fx = [K.projectile, ...(K.effects || [])].find(e => e && e.pose === cat);
       const budget = fx ? fx.budget || 0x600 : MK3.bodyBudget;
       const start = fx ? fx.scale : K.scale;
       poses[cat] = ids.map(id => {
         let img = A.pose(id);
-        if (K.artPalette && K.artPalette[cat]) img = recolour(img, paletteAt(A.rom, A.at(K.artPalette[cat])), kongPal);
+        if (K.artPalette && K.artPalette[cat]) img = recolour(img, rgbPal(A.pal(K.artPalette[cat])), kongPal);
         for (let s = start; ; s -= 0.05) { const pc = pieces(scaled(img, s)); if (vramEnd(mk3Rom, pc.big.length, pc.small.length) <= budget || s < 0.8) return pc; }
       });
     }
@@ -643,8 +717,9 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
     desc[5] = lo(framesAt); desc[6] = hi(framesAt); desc[7] = T;
     setDesc(K.setId, put(desc));
     // colours
-    setPalette(K.palette, A.rom, K.kongPalette);
-    if (P && P.slot) setPalette(P.slot, A.rom, A.at(P.slotFrom));
+    setPalette(K.palette, A.pal(K.kongPalette));
+    if (P && P.slot) setPalette(P.slot, A.pal(P.slotFrom));
+    if (K.altPalette) setPalette(K.altPalette.slot, A.pal(K.altPalette.from));
     stats[key] = { replaced, kept, tiles: tiles.length };
     attackJobs.push({ K, recipe, frameAddr, boxes });
   }
@@ -706,7 +781,7 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
   }
 
   // ---- select-screen portraits: copied over the unpacked picture, and again after the game's pass ----
-  const S = MK3.select, ports = which.map(k => { const K = kongs[k], A = artSource(K, roms), tiles = kongPortrait(mk3Rom, A.pose(K.portraitPose), paletteAt(A.rom, K.kongPalette), S);
+  const S = MK3.select, ports = which.map(k => { const K = kongs[k], A = artSource(K, roms), tiles = kongPortrait(mk3Rom, A.pose(K.portraitPose), rgbPal(A.pal(K.kongPalette)), S);
     return { tiles, at: put(tiles), ram: S.tileRam(K.portraitTile) }; });
   const mvn = p => [0x8B, 0xDA, 0x5A, 0xA2, lo(p.at), hi(p.at), 0xA0, lo(p.ram), hi(p.ram), 0xA9, lo(p.tiles.length - 1), hi(p.tiles.length - 1), 0x54, p.ram >> 16, T, 0x7A, 0xFA, 0xAB];
   {
@@ -764,28 +839,23 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
     const btiles = [], word = t => { btiles.push(t); return (((btiles.length - 1) << 8) | (entry * 4)); };
     const copies = {};
     for (const k of which) {
+      // The guest's own banner: "<NAME> WINS" drawn here, cut into 16x16 pieces and laid out where the
+      // original banner sits (its own pieces have gaps where the original words had spaces)
       const K = kongs[k], origAddr = frameAddr(K.bannerFrame - 1), orig = buildFrame(mk3Rom, rc, origAddr);
-      const x0 = Math.min(...orig.pieces.map(p => p.x)), x1 = Math.max(...orig.pieces.map(p => p.x + p.size)), y0 = Math.min(...orig.pieces.map(p => p.y));
-      // if the original banner has a gap with no sprites (between the name and WINS), the name goes
-      // left of it and WINS right of it; otherwise the whole line is stretched across
-      const W = x1 - x0, bh = bannerText("A").h;
-      const covered = x => { for (let y = y0; y < y0 + bh; y++) if (!orig.pieces.some(p => x >= p.x && x < p.x + p.size && y >= p.y && y < p.y + p.size)) return false; return true; };
-      // (the gap nearest to where the name would end, if it is near enough)
-      const nw = bannerText(K.name).w, ww = bannerText("WINS").w, split = x0 + W * nw / (nw + ww + 8);
-      let gap = null; for (let x = x0; x < x1; x++) if (!covered(x)) { let e = x; while (e < x1 && !covered(e)) e++;
-        if (e - x >= 3 && Math.abs((x + e) / 2 - split) < W * 0.15 && (!gap || Math.abs((x + e) / 2 - split) < Math.abs((gap[0] + gap[1]) / 2 - split))) gap = [x, e]; x = e; }
-      const parts = gap ? [[K.name, x0, gap[0]], ["WINS", gap[1], x1]] : [[K.name + " WINS", x0, x1]];
-      const big = { h: bh }, img = new Uint8Array(W * big.h);
-      for (const [text, a0, a1] of parts) { const t = bannerText(text), w = a1 - a0;
-        for (let y = 0; y < big.h; y++) for (let x = 0; x < w; x++) img[y * W + a0 - x0 + x] = t.data[y * t.w + Math.floor(x * t.w / w)]; }
-      const at = (x, y) => (x >= x0 && x < x1 && y >= y0 && y < y0 + big.h) ? img[(y - y0) * W + (x - x0)] : 0;
-      const tileAt = (px, py) => { const t = new Uint8Array(256); for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) t[y * 16 + x] = at(px + x, py + y); return tileBytes(t, 0, 0); };
-      const words = orig.pieces.flatMap(p => p.size === 16 ? [word(tileAt(p.x, p.y)), word(tileAt(p.x + 8, p.y)), word(tileAt(p.x, p.y + 8)), word(tileAt(p.x + 8, p.y + 8))] : [word(tileAt(p.x, p.y))]);
-      const src = off(origAddr), copy = Uint8Array.from(mk3Rom.subarray(src, src + streamLength(mk3Rom, origAddr)));
-      let p = 2, w = 0; const total = copy[0], n16 = copy[1];
-      for (let i = 0; i < total; i++) { const c = copy[p++]; if (!(c & 0xF0)) p++; if (!(c & 0x0F)) p++;
-        for (let j = 0; j < (i < n16 ? 4 : 1); j++, w++) { copy[p] = lo(words[w]); copy[p + 1] = hi(words[w]); p += 2; } }
-      copies[K.bannerFrame] = copy;
+      const big16 = orig.pieces.filter(p => p.size === 16), x0 = Math.min(...orig.pieces.map(p => p.x)), x1 = Math.max(...orig.pieces.map(p => p.x + p.size));
+      const y0 = Math.min(...(big16.length ? big16 : orig.pieces).map(p => p.y));
+      const t = bannerText(K.name + " WINS"), left = Math.round((x0 + x1) / 2 - t.w / 2), pcs = [], yb = y0 + MK3.bannerDy;
+      // (one 16x16 piece first, then 8x8 ones: the text is only 11 px tall and banners get little sprite
+      // memory, and a frame made only of 8x8 pieces is placed differently by the game)
+      { const px = new Uint8Array(256);
+        for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) if (x < t.w && y < t.h) px[y * 16 + x] = t.data[y * t.w + x];
+        pcs.push({ big: true, x: left, y: yb, w: [word(tileBytes(px, 0, 0)), word(tileBytes(px, 8, 0)), word(tileBytes(px, 0, 8)), word(tileBytes(px, 8, 8))] }); }
+      for (let cy = 0; cy < t.h; cy += 8) for (let cx = 16; cx < t.w; cx += 8) {
+        const px = new Uint8Array(256); let any = false;
+        for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) { const X = cx + x, Y = cy + y; if (X < t.w && Y < t.h) { const v = t.data[Y * t.w + X]; px[y * 16 + x] = v; if (v) any = true; } }
+        if (any) pcs.push({ big: false, x: left + cx, y: yb + cy, w: [word(tileBytes(px, 0, 0))] });
+      }
+      copies[K.bannerFrame] = stream(pcs, 0, 0);
     }
     if (btiles.length > 256) throw new Error("banner tiles");
     const bBank = bank++; let bp = 0;
@@ -834,7 +904,7 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
   // ---- movement from each guest's own game ----
   {
     const PH = MK3.physics, R = a => [lo(a), hi(a)];
-    const AIR = PH.ram, DJ = PH.ram + 4, VXM = PH.ram + 8, VYM = PH.ram + 12, LVX = PH.ram + 16, LVY = PH.ram + 20;
+    const AIR = PH.ram, DJ = PH.ram + 4, VXM = PH.ram + 8, VYM = PH.ram + 12, LVX = PH.ram + 16, LVY = PH.ram + 20, TMP = PH.ram + 24;
     const c = [], lb = {}, fx = [];
     const L2 = name => { lb[name] = c.length; };
     const br = (op, l) => { c.push(op ^ 0x20, 3, 0x82, 0, 0); fx.push([c.length - 2, l]); };   // long conditional
@@ -843,7 +913,17 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
     const cmpI = v => c.push(0xC9, ...R(v & 0xFFFF)), andI = v => c.push(0x29, ...R(v & 0xFFFF));
     const neg = () => c.push(0x49, 0xFF, 0xFF, 0x1A), asr = n => { for (let i = 0; i < n; i++) c.push(0xC9, 0x00, 0x80, 0x6A); };
     // ease vxm toward the target in A by 1/2^ease (or set it outright), then write it as the velocity
+    let uid = 0;
     const easeTo = (P, tag) => {
+      if (P.accel) {   // SMW: speed changes by a fixed step a frame (smaller when slowing to a stop)
+        const t = "acc" + (uid++) + "_";
+        staY(TMP); br(0xD0, t + "go"); ldaI(P.decel || P.accel); bra(t + "st"); L2(t + "go"); ldaI(P.accel); L2(t + "st"); staY(TMP + 2);
+        ldaY(VXM); c.push(0x38, 0xF9, ...R(TMP)); br(0xF0, t + "tgt"); br(0x10, t + "above");
+        ldaY(VXM); c.push(0x18, 0x79, ...R(TMP + 2)); staY(VXM); c.push(0x38, 0xF9, ...R(TMP)); br(0x30, t + "w"); bra(t + "tgt");
+        L2(t + "above"); ldaY(VXM); c.push(0x38, 0xF9, ...R(TMP + 2)); staY(VXM); c.push(0x38, 0xF9, ...R(TMP)); br(0x10, t + "w");
+        L2(t + "tgt"); ldaY(TMP); staY(VXM);
+        L2(t + "w"); ldaY(VXM); staY(PH.vx); staY(LVX); return;
+      }
       if (P.ease) { c.push(0x38, 0xF9, ...R(VXM)); asr(P.ease); c.push(0x18, 0x79, ...R(VXM)); }
       staY(VXM); staY(PH.vx); staY(LVX);
     };
@@ -875,6 +955,22 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
       // gravity: lighter while Up is held (DKC's higher jump when the button is kept down)
       ldaY(PH.held); andI(0x0800); br(0xF0, t + "rel"); ldaI(GH); bra(t + "gadd"); L2(t + "rel"); ldaI(GR);
       L2(t + "gadd"); c.push(0x18, 0x79, ...R(VYM)); staY(VYM);
+      if (P.maxFall) { const MF = Math.round(P.maxFall * vs); ldaY(VYM); c.push(0x38, 0xE9, ...R(MF)); br(0x30, t + "nomf"); ldaI(MF); staY(VYM); L2(t + "nomf"); }
+      if (P.stomp) {   // falling onto the opponent's head: big damage, bounce back up (once per jump)
+        const S = P.stomp;
+        ldaY(VYM); br(0x30, t + "nost"); br(0xF0, t + "nost"); ldaY(DJ); br(0xD0, t + "nost");
+        c.push(0x98, 0x49, 0x02, 0x00, 0xAA);                                   // tya / eor #2 / tax: the opponent
+        ldaY(PH.x); c.push(0x38, 0xFD, ...R(PH.x)); br(0x10, t + "dxp"); neg(); L2(t + "dxp");
+        cmpI(S.rangeX); br(0xB0, t + "nost");
+        c.push(0xBD, ...R(PH.y)); c.push(0x38, 0xF9, ...R(PH.y));               // opponent's feet - ours
+        c.push(0x38, 0xE9, ...R(S.above[0])); br(0x30, t + "nost"); cmpI(S.above[1] - S.above[0]); br(0xB0, t + "nost");
+        // hit: the opponent's health (P1 $3634 / P2 $37F6)
+        c.push(0x98); br(0xD0, t + "hp1");
+        c.push(0xAD, ...R(PH.health[1]), 0x38, 0xE9, ...R(S.damage)); br(0x10, t + "hp2s"); ldaI(0); L2(t + "hp2s"); c.push(0x8D, ...R(PH.health[1])); bra(t + "hpd");
+        L2(t + "hp1"); c.push(0xAD, ...R(PH.health[0]), 0x38, 0xE9, ...R(S.damage)); br(0x10, t + "hp1s"); ldaI(0); L2(t + "hp1s"); c.push(0x8D, ...R(PH.health[0]));
+        L2(t + "hpd"); ldaI(1); staY(DJ); ldaI(-Math.round(VY0 * 0.8)); staY(VYM);
+        L2(t + "nost");
+      }
       // ceiling: still rising with the feet near the top of the screen -> stop rising
       ldaY(PH.y); c.push(0x38, 0xE9, ...R(PH.ceiling)); br(0x10, t + "noceil"); ldaY(VYM); br(0x10, t + "noceil"); ldaI(0); staY(VYM); L2(t + "noceil");
       L2(t + "wvy"); ldaY(VYM); staY(PH.vy); c.push(0x18); c.push(0x69, ...R(PH.gravity)); staY(LVY);
@@ -923,7 +1019,7 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS) {
     for (const site of V.calls) patchCall(site, V.unpacker, wrapAt);
     for (const k of which) {
       const K = kongs[k], A = artSource(K, roms), id = K.namesEntry, count = w16(V.count + id * 2);
-      const pal = paletteAt(A.rom, K.kongPalette), img0 = A.pose(K.vsPose || K.portraitPose);
+      const pal = rgbPal(A.pal(K.kongPalette)), img0 = A.pose(K.vsPose || K.portraitPose);
       // largest size that fits the area and the fighter's tile budget
       let cellsOut = null;
       for (let sc = 8; sc > 0.5; sc -= 0.1) {
