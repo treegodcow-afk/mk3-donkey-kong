@@ -247,10 +247,10 @@ export const MK3 = {
   select: { unpackCall: 0x02C217, unpacker: 0x86E41A, fillCall: 0x02C238, filler: 0x82C4DC, source: 0xC30000,
             towerCall: 0x0592DA, towerShift: 0x6300 - 0x3B00,
             // the tower shows the same picture with its own colours: its portraits use 129-223, which there
-            // are the select screen's colour table one step on (the select screen uses 48-127 here)
+            // are the select screen's colour table one step on (the select screen uses 1-127)
             towerPalette: c => (c >= 129 && c <= 223 ? 0x3F90F4 + 2 * (c - 128) : null),
             tileRam: t => 0x7F6E00 + (t - 0x10C) * 64, w: 32, h: 56,
-            palette: c => (c < 48 ? null : 0x3F90F4 + 2 * (c - 48)) },
+            palette: c => (c >= 128 ? null : c < 48 ? 0x3F9090 + 2 * c : 0x3F90F4 + 2 * (c - 48)) },
   // Fight name bar: every name is in one strip picture unpacked from $F6:0396 to $7F:5300 (call at
   // $80:FF0A); a table at $80:FF0F gives each name's (first tile, tiles, padding).
   names: { unpackCall: 0x00FF0A, buffer: 0x7F5300, table: 0x00FF0F },
