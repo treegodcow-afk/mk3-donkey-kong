@@ -246,8 +246,9 @@ export const MK3 = {
   // at $7F:6E00 and the rest follow in order. Colours 1-127 of the picture are fixed.
   select: { unpackCall: 0x02C217, unpacker: 0x86E41A, fillCall: 0x02C238, filler: 0x82C4DC, source: 0xC30000,
             towerCall: 0x0592DA, towerShift: 0x6300 - 0x3B00,
-            // portraits use colours 48-127 only: the tower shows the same picture with those colours moved
-            // up by 80 (its colours below 48 are different)
+            // the tower shows the same picture with its own colours: its portraits use 129-223, which there
+            // are the select screen's colour table one step on (the select screen uses 48-127 here)
+            towerPalette: c => (c >= 129 && c <= 223 ? 0x3F90F4 + 2 * (c - 128) : null),
             tileRam: t => 0x7F6E00 + (t - 0x10C) * 64, w: 32, h: 56,
             palette: c => (c < 48 ? null : 0x3F90F4 + 2 * (c - 48)) },
   // Fight name bar: every name is in one strip picture unpacked from $F6:0396 to $7F:5300 (call at
@@ -365,7 +366,7 @@ function tileBytes(px, ox, oy) {                       // 8x8 of a 16x16 cell ->
 export function kongPortrait(mk3, pose, dk, sel) {
   const rgb = w => [(w & 31) << 3, ((w >> 5) & 31) << 3, ((w >> 10) & 31) << 3];
   // colours 128+ are sprite colours that change with the cursor, so only 1-127 are used
-  const pal = []; for (let c = 1; c < 128; c++) if (c % 16) { const o = sel.palette(c); if (o != null) pal.push([c, rgb(mk3[o] | (mk3[o + 1] << 8))]); }
+  const pal = []; for (let c = 1; c < 256; c++) if (c % 16) { const o = sel.palette(c); if (o != null) pal.push([c, rgb(mk3[o] | (mk3[o + 1] << 8))]); }
   const nearest = ([r, g, b]) => { let best = 1, bd = 1e9; for (const [c, [R, G, B]] of pal) { const d = (r - R) ** 2 * 3 + (g - G) ** 2 * 4 + (b - B) ** 2 * 2; if (d < bd) { bd = d; best = c; } } return best; };
   const bg = nearest([24, 16, 32]), bg2 = nearest([56, 40, 64]);
   // scale the pose so it is 34 px wide, keep the top (head and shoulders), centred
@@ -789,7 +790,8 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS, opts = 
 
   // ---- select-screen portraits: copied over the unpacked picture, and again after the game's pass ----
   const S = MK3.select, ports = which.map(k => { const K = kongs[k], A = artSource(K, roms), tiles = kongPortrait(mk3Rom, A.pose(K.portraitPose), rgbPal(A.pal(K.kongPalette)), S);
-    return { tiles, at: put(tiles), ram: S.tileRam(K.portraitTile), K }; });
+    const towerTiles = kongPortrait(mk3Rom, A.pose(K.portraitPose), rgbPal(A.pal(K.kongPalette)), { ...S, palette: S.towerPalette });
+    return { tiles, at: put(tiles), ram: S.tileRam(K.portraitTile), K, towerAt: put(towerTiles) }; });
   // ---- guests only: every square of the select screen picks a guest (the fighter-number -> character
   // table at $84:E3D7), and shows that guest's portrait ----
   if (opts.guestsOnly !== false && ports.length) {
@@ -799,7 +801,7 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS, opts = 
       if (own.has(cur)) return;                                   // a guest's own square
       const p = ports[k++ % ports.length];
       rom[R.table + num] = p.K.fighterId; mirror(R.table + num);
-      if (tile) ports.push({ tiles: p.tiles, at: p.at, ram: S.tileRam(tile), K: p.K });
+      if (tile) ports.push({ tiles: p.tiles, at: p.at, ram: S.tileRam(tile), K: p.K, towerAt: p.towerAt });
     });
   }
   const mvn = p => [0x8B, 0xDA, 0x5A, 0xA2, lo(p.at), hi(p.at), 0xA0, lo(p.ram), hi(p.ram), 0xA9, lo(p.tiles.length - 1), hi(p.tiles.length - 1), 0x54, p.ram >> 16, T, 0x7A, 0xFA, 0xAB];
@@ -826,7 +828,7 @@ export function buildKongsMk3(mk3Rom, roms, which = null, kongs = KONGS, opts = 
       0x68, 0x68, 0x6B];
     patchCall(S.fillCall, S.filler, put(Uint8Array.from(f)));
     // the 1-player tower unpacks the same picture to $7F:6300 and takes its small portraits from it
-    const towerCopy = put(Uint8Array.from([...ports.flatMap(p => mvn({ ...p, ram: p.ram + S.towerShift })), 0x6B]));
+    const towerCopy = put(Uint8Array.from([...ports.flatMap(p => mvn({ ...p, at: p.towerAt, ram: p.ram + S.towerShift })), 0x6B]));
     patchCall(S.towerCall, S.unpacker, put(Uint8Array.from([0x22, ...L(S.unpacker), 0x08, 0xC2, 0x30, 0x48, 0x22, lo(towerCopy), hi(towerCopy), T, 0x68, 0x28, 0x6B])));
   }
 
